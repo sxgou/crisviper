@@ -1,0 +1,2 @@
+[console_scripts]
+lineage-tracer = lineage_tracer_amplicon.cli:main

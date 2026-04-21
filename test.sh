@@ -6,4 +6,5 @@ lineage-tracer analyze \
 --sample_name EPSC2 \
 --kmer_size 6 \
 --min_overlap 10 \
---threads 10
+--threads 10 \
+--no_trim_primers
