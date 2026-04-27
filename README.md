@@ -1,205 +1,102 @@
-# LineageTracer-Amplicon
+# CARLIN序列分析工具
 
-CRISPR lineage tracing amplicon analysis software for structured CRISPR arrays.
+基于仿射gap惩罚算法的序列比对命令行工具，支持多进程并行加速和FASTQ格式转换。
 
-## Overview
+## 功能特性
 
-This software analyzes amplicon sequencing data from CRISPR-Cas9 lineage tracing experiments with synthetic target arrays. It accurately identifies editing events including large deletions, insertions, and point mutations while filtering out sequencing artifacts.
+- **仿射gap惩罚算法**：基于Gotoh算法（Needleman-Wunsch的仿射gap扩展）
+- **多进程并行加速**：自动利用所有CPU核心，大幅提升批量比对速度
+- **FASTQ格式转换**：支持将FASTQ文件转换为TSV或FASTA格式
+- **灵活的比对参数**：可调整匹配得分、错配惩罚、gap惩罚等参数
+- **多种输出格式**：支持JSON和TSV输出格式
+- **实时进度显示**：并行处理时实时显示完成进度
 
-## Key Features
+## 快速开始
 
-- **Paired-end read merging**: Support for paired-end sequencing data using fastp with configurable minimum overlap
-- **Primer validation**: Only reads containing both Primer5 and Primer3 (with configurable mismatch tolerance) are analyzed
-- **Anchor-guided alignment**: Uses conserved regions as anchors for accurate alignment even with large deletions
-- **Fragment classification**: Correctly classifies "fragment" sequences within deletions as MMEJ or NHEJ repair products
-- **Position-filtered SNV detection**: Only point mutations within cutsite ±3bp windows are considered valid editing events
-- **Target state determination**: Generates mutation state matrix for each target (WT, DEL, INS, SNV, COMPLEX)
-- **Enrichment analysis**: Validates cutting specificity by comparing breakpoint distribution to expected cutsites
-
-## Installation
-
-### From source
-
+### 安装依赖
 ```bash
-git clone <repository-url>
-cd lineage_tracer_amplicon
-pip install -e .
+pip install -r requirements.txt
 ```
 
-### Dependencies
+### 基本使用示例
 
-- Python >= 3.9
-- biopython >= 1.81
-- pandas >= 2.0
-- numpy >= 1.24
-- scipy >= 1.10
-- matplotlib >= 3.7
-- pyyaml >= 6.0
-- edlib >= 1.3.9
-- tqdm >= 4.65
-- pysam >= 0.21
-
-**For paired-end merging**:
-- [fastp](https://github.com/OpenGene/fastp) >= 0.23.0 (install via `conda install -c bioconda fastp`)
-
-## Quick Start
-
-### 1. Prepare configuration file
-
-Define your amplicon structure in JSON format:
-
-```json
-{
-  "reference": "ATCG...full sequence...",
-  "features": [
-    {"name": "Primer5", "start": 0, "end": 23, "type": "primer"},
-    {"name": "prefix", "start": 23, "end": 28, "type": "prefix"},
-    {"name": "Target1", "start": 28, "end": 48, "type": "target",
-     "conserved": [28, 41], "cutsite": [41, 48]},
-    ...
-  ]
-}
+1. **将FASTQ转换为TSV格式**：
+```bash
+python carlin_tool.py convert fastq-to-tsv \
+  --fastq reads.fastq.gz \
+  --output reads.tsv \
+  --sample-name my_sample
 ```
 
-### 2. Run analysis
-
-**Single-end analysis**:
+2. **并行批量序列比对**（自动使用所有CPU核心）：
 ```bash
-lineage-tracer analyze \
-  --fastq_r1 sample_R1.fastq.gz \
-  --config amplicon_structure.json \
-  --output_dir ./results \
-  --sample_name Embryo_Day5 \
+python carlin_tool.py align \
+  --reference reference.fasta \
+  --queries queries.tsv \
+  --output alignments.json
+```
+
+3. **指定并行进程数**：
+```bash
+python carlin_tool.py align \
+  --reference reference.fasta \
+  --queries queries.fasta \
+  --output alignments.json \
   --threads 8
 ```
 
-**Paired-end analysis with merging**:
-```bash
-lineage-tracer analyze \
-  --fastq_r1 sample_R1.fastq.gz \
-  --fastq_r2 sample_R2.fastq.gz \
-  --config amplicon_structure.json \
-  --output_dir ./results \
-  --sample_name Embryo_Day5 \
-  --min_overlap 30 \
-  --max_mismatch_rate 0.2 \
-  --threads 8
+## 文件结构
+
+```
+.
+├── affine_gap_alignment.py    # 核心比对算法
+├── carlin_tool.py             # 命令行工具主程序
+├── requirements.txt           # Python依赖
+├── README.md                  # 说明文档
+├── example_data/              # 示例数据
+│   ├── reference.fa          # 参考序列示例
+│   └── test_queries.tsv      # 查询序列示例
+└── docs/                      # 详细文档目录
+    ├── ALGORITHM.md          # 算法原理文档
+    └── USER_GUIDE.md         # 使用手册
 ```
 
-**Paired-end analysis without merging** (use R1 only):
-```bash
-lineage-tracer analyze \
-  --fastq_r1 sample_R1.fastq.gz \
-  --fastq_r2 sample_R2.fastq.gz \
-  --config amplicon_structure.json \
-  --output_dir ./results \
-  --skip_merge
-```
+## 算法特点
 
-### 3. View results
+1. **最小化错配**：错配惩罚高于gap惩罚，优先选择插入/缺失而非错配
+2. **减少短gap**：gap延伸惩罚极低，鼓励连续长gap而非多个短gap
+3. **鼓励插入**：gap开启惩罚相对较低，使插入/缺失比错配更有利
+4. **处理连续indel**：仿射gap模型自然处理连续插入/缺失事件
+5. **支持半全局比对**：允许序列两端自由gap（不惩罚）
 
-- `per_read_annotation.tsv`: Mutation states for each read
-- `barcode_frequencies.tsv`: Frequency of each barcode pattern
-- `statistics.json`: Summary statistics and editing efficiency
-- `intermediate/` directory (for paired-end): Contains fastp merge reports and merged reads
+## 并行加速
 
-## Configuration Wizard
+- 使用Python多进程（`ProcessPoolExecutor`）实现真正的并行计算
+- 每个CPU核心独立处理不同的序列，互不干扰
+- 默认自动检测并使用所有可用CPU核心
+- 可通过 `--threads` 或 `-t` 参数手动指定进程数
+- 支持对数千条序列的快速批量处理
 
-Generate configuration interactively:
+## 应用场景
 
-```bash
-lineage-tracer config-wizard --output my_config.json
-```
+- **CARLIN基因编辑分析**：检测大片段缺失和点突变
+- **扩增子测序分析**：比对测序reads到参考序列
+- **突变检测**：识别序列中的插入、缺失和替换
+- **序列质量控制**：评估测序reads与参考序列的相似度
 
-## Paired-End Sequencing Support
+## 性能特点
 
-The software supports paired-end sequencing data through integration with [fastp](https://github.com/OpenGene/fastp). When `--fastq_r2` is provided, reads are automatically merged before analysis.
+- **时间复杂度**：O(m×n)，其中m,n为序列长度
+- **并行加速比**：近似线性（受序列长度和数据量影响）
+- **典型性能**：332bp×133bp（CARLIN）单序列约45ms
 
-### Key Parameters for Merging
+## 许可证
 
-- `--min_overlap`: Minimum overlap length required for merging (default: 30)
-- `--max_mismatch_rate`: Maximum mismatch rate allowed in overlap region (default: 0.2)
-- `--skip_merge`: Skip merging even for paired-end data (analyze R1 only)
-- `--min_quality`: Minimum base quality for filtering (default: 20)
+MIT License
 
-### Merging Process
+## 技术支持
 
-1. **Quality filtering**: Remove low-quality bases and reads
-2. **Adapter trimming**: Automatically detect and remove adapters
-3. **Overlap detection**: Find overlapping regions between R1 and R2
-4. **Merging**: Combine overlapping reads into single consensus sequences
-5. **Error correction**: Correct sequencing errors in overlap regions
-
-### Output Files for Paired-End Analysis
-
-- `intermediate/{sample}_merged.fastq.gz`: Merged reads
-- `intermediate/{sample}_fastp.json`: JSON report with merge statistics
-- `intermediate/{sample}_fastp.html`: HTML report for visualization
-
-## Detailed Documentation
-
-### Amplicon Structure
-
-The software supports structured CRISPR arrays with:
-- Primer5 (5' primer, 23bp)
-- Prefix (5bp)
-- 10 targets, each with:
-  - Conserved region (13bp)
-  - Cutsite region (7bp, contains PAM upstream 3bp)
-- PAM_Linker between targets (3bp PAM + 4bp linker)
-- Postfix (8bp)
-- Primer3 (3' primer, 33bp)
-
-### Algorithm Overview
-
-1. **Read preprocessing**: For paired-end data, merge reads using fastp
-2. **Primer validation**: Detect Primer5 at 5' end and Primer3 at 3' end with configurable mismatch tolerance
-3. **Anchor matching**: Use k-mer indexing to find conserved anchor sequences in reads
-4. **Deletion inference**: Identify gaps between matched anchors as candidate deletions
-5. **Fragment classification**: Analyze sequences within deletions as pure deletions, MMEJ, or NHEJ with insertion
-6. **SNV filtering**: Only retain point mutations within cutsite ±3bp windows
-7. **Target state determination**: Map events to each target and assign mutation state
-8. **Barcode generation**: Create barcode string from target states for lineage tracing
-
-### Output Files
-
-- **per_read_annotation.tsv**: Tab-separated file with read ID, validity, target states, barcode, and events JSON
-- **barcode_frequencies.tsv**: Frequency table of unique barcodes
-- **statistics.json**: JSON summary with editing efficiency, per-target statistics, and enrichment analysis
-- **breakpoint_density.bedgraph**: Breakpoint density for visualization in IGV
-- **indel_length_distribution.tsv**: Distribution of indel lengths
-- **snv_distribution.tsv**: Distribution of valid point mutations
-
-## Testing
-
-Run the test suite:
-
-```bash
-cd lineage_tracer_amplicon
-python test/test_suite.py
-```
-
-## Performance
-
-- Designed for high-throughput analysis (millions of reads)
-- Multi-threading support for both fastp merging and analysis
-- Memory-efficient processing with streaming
-- C++ core for performance-critical operations (planned)
-
-## Citation
-
-If you use this software in your research, please cite:
-
-[Citation information will be added]
-
-## License
-
-[License information will be added]
-
-## Support
-
-For issues and feature requests, please open an issue on GitHub.
-
-## Acknowledgements
-
-This software was developed based on the detailed specification document "CRISPR谱系追踪扩增子分析软件 - 完整开发文档.md".
+如有问题或建议，请：
+1. 确保已安装所有依赖 (`pip install -r requirements.txt`)
+2. 查看详细文档：`docs/ALGORITHM.md` 和 `docs/USER_GUIDE.md`
+3. 使用帮助命令：`python carlin_tool.py --help`

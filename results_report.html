@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CARLIN 序列分析报告</title>
+<style>
+  body { font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background: #f5f7fa; color: #333; }
+  .container { max-width: 960px; margin: 0 auto; }
+  h1 { color: #1a1a2e; border-bottom: 3px solid #4a6cf7; padding-bottom: 10px; }
+  h2 { color: #1a1a2e; margin-top: 30px; }
+  .meta { color: #666; font-size: 14px; margin-bottom: 20px; }
+  .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin: 20px 0; }
+  .card { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); text-align: center; }
+  .card .value { font-size: 28px; font-weight: 700; color: #4a6cf7; }
+  .card .label { font-size: 13px; color: #888; margin-top: 5px; }
+  .card.highlight { background: #4a6cf7; color: #fff; }
+  .card.highlight .value { color: #fff; }
+  .card.highlight .label { color: rgba(255,255,255,0.85); }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin: 15px 0; }
+  th { background: #4a6cf7; color: #fff; padding: 12px 15px; text-align: left; font-weight: 600; }
+  td { padding: 10px 15px; border-bottom: 1px solid #eee; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #f0f4ff; }
+  .section { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin: 15px 0; }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  .stat-item { padding: 8px 12px; background: #f8f9fc; border-radius: 6px; }
+  .stat-item .s-label { font-size: 12px; color: #888; }
+  .stat-item .s-value { font-size: 18px; font-weight: 600; color: #333; }
+  footer { text-align: center; color: #aaa; font-size: 12px; margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>🔬 CARLIN 序列分析报告</h1>
+<div class="meta">生成时间: 2026-04-24 09:03:31 | 工具版本: 2.1.0</div>
+
+<div class="summary-cards">
+  <div class="card">
+    <div class="value">23430</div>
+    <div class="label">总序列数</div>
+  </div>
+  <div class="card">
+    <div class="value">236865</div>
+    <div class="label">总Reads数</div>
+  </div>
+  <div class="card">
+    <div class="value">23430</div>
+    <div class="label">成功比对</div>
+  </div>
+  <div class="card highlight">
+    <div class="value">99.93%</div>
+    <div class="label">编辑效率</div>
+  </div>
+</div>
+
+<div class="summary-cards">
+  <div class="card">
+    <div class="value">23414</div>
+    <div class="label">突变序列数</div>
+  </div>
+  <div class="card">
+    <div class="value">101638</div>
+    <div class="label">突变Reads数</div>
+  </div>
+  <div class="card">
+    <div class="value">16</div>
+    <div class="label">未突变序列数</div>
+  </div>
+  <div class="card">
+    <div class="value">0</div>
+    <div class="label">比对失败</div>
+  </div>
+</div>
+
+<h2>📊 突变类型分布</h2>
+<table>
+<tr><th>突变类型</th><th>序列数</th><th>序列占比</th><th>Reads数</th><th>Reads占比</th></tr>
+<tr><td>仅点突变（替换）</td><td>6539</td><td>27.9%</td><td>27332</td><td>26.9%</td></tr>
+<tr><td>仅删除</td><td>2746</td><td>11.7%</td><td>52529</td><td>51.7%</td></tr>
+<tr><td>仅插入</td><td>139</td><td>0.6%</td><td>1406</td><td>1.4%</td></tr>
+<tr><td>插入 + 删除</td><td>4211</td><td>18.0%</td><td>9306</td><td>9.2%</td></tr>
+<tr><td>插入 + 点突变</td><td>366</td><td>1.6%</td><td>399</td><td>0.4%</td></tr>
+<tr><td>删除 + 点突变</td><td>3655</td><td>15.6%</td><td>4853</td><td>4.8%</td></tr>
+<tr><td>插入 + 删除 + 点突变</td><td>5758</td><td>24.6%</td><td>5813</td><td>5.7%</td></tr>
+
+</table>
+
+<h2>📏 突变统计指标</h2>
+<div class="section">
+<div class="stat-grid">
+  <div class="stat-item">
+    <div class="s-label">点突变总数</div>
+    <div class="s-value">32389</div>
+  </div>
+  <div class="stat-item">
+    <div class="s-label">插入事件数</div>
+    <div class="s-value">13361</div>
+  </div>
+  <div class="stat-item">
+    <div class="s-label">删除事件数</div>
+    <div class="s-value">25500</div>
+  </div>
+  <div class="stat-item">
+    <div class="s-label">平均插入长度</div>
+    <div class="s-value">20.76 bp</div>
+  </div>
+  <div class="stat-item">
+    <div class="s-label">平均删除长度</div>
+    <div class="s-value">67.93 bp</div>
+  </div>
+  <div class="stat-item">
+    <div class="s-label">最大插入长度</div>
+    <div class="s-value">511 bp</div>
+  </div>
+  <div class="stat-item">
+    <div class="s-label">最大删除长度</div>
+    <div class="s-value">330 bp</div>
+  </div>
+</div>
+</div>
+
+<h2>📋 突变序列明细（前100条）</h2>
+<table>
+<tr><th>#</th><th>序列名</th><th>Reads</th><th>点突变</th><th>插入事件</th><th>删除事件</th><th>相似度</th></tr>
+<tr><td>1</td><td>ESPC2_seq4</td><td>10417</td><td>0</td><td>0</td><td>243</td><td>0.2680722891566265</td></tr>
+<tr><td>2</td><td>ESPC2_seq7</td><td>425</td><td>0</td><td>0</td><td>216</td><td>0.3493975903614458</td></tr>
+<tr><td>3</td><td>ESPC2_seq5</td><td>109</td><td>0</td><td>0</td><td>111</td><td>0.6656626506024096</td></tr>
+<tr><td>4</td><td>ESPC2_seq6</td><td>64</td><td>0</td><td>0</td><td>99</td><td>0.7018072289156626</td></tr>
+<tr><td>5</td><td>ESPC2_seq1</td><td>9</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>6</td><td>ESPC2_seq2</td><td>1</td><td>5</td><td>88</td><td>88</td><td>0.569047619047619</td></tr>
+<tr><td>7</td><td>ESPC2_seq3</td><td>95</td><td>0</td><td>0</td><td>1</td><td>0.9969879518072289</td></tr>
+<tr><td>8</td><td>ESPC2_seq8</td><td>1</td><td>3</td><td>20</td><td>20</td><td>0.8778409090909091</td></tr>
+<tr><td>9</td><td>ESPC2_seq17</td><td>77</td><td>0</td><td>1</td><td>108</td><td>0.6726726726726727</td></tr>
+<tr><td>10</td><td>ESPC2_seq13</td><td>48</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>11</td><td>ESPC2_seq16</td><td>17</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>12</td><td>ESPC2_seq12</td><td>48</td><td>0</td><td>0</td><td>11</td><td>0.9668674698795181</td></tr>
+<tr><td>13</td><td>ESPC2_seq11</td><td>122</td><td>0</td><td>1</td><td>0</td><td>0.996996996996997</td></tr>
+<tr><td>14</td><td>ESPC2_seq10</td><td>3</td><td>2</td><td>0</td><td>0</td><td>0.9939759036144579</td></tr>
+<tr><td>15</td><td>ESPC2_seq15</td><td>1</td><td>2</td><td>0</td><td>0</td><td>0.9939759036144579</td></tr>
+<tr><td>16</td><td>ESPC2_seq14</td><td>1</td><td>2</td><td>10</td><td>10</td><td>0.935672514619883</td></tr>
+<tr><td>17</td><td>ESPC2_seq25</td><td>1151</td><td>0</td><td>0</td><td>216</td><td>0.3493975903614458</td></tr>
+<tr><td>18</td><td>ESPC2_seq22</td><td>660</td><td>0</td><td>0</td><td>135</td><td>0.5933734939759037</td></tr>
+<tr><td>19</td><td>ESPC2_seq18</td><td>101</td><td>0</td><td>0</td><td>1</td><td>0.9969879518072289</td></tr>
+<tr><td>20</td><td>ESPC2_seq28</td><td>226</td><td>0</td><td>0</td><td>233</td><td>0.29819277108433734</td></tr>
+<tr><td>21</td><td>ESPC2_seq19</td><td>128</td><td>0</td><td>0</td><td>1</td><td>0.9969879518072289</td></tr>
+<tr><td>22</td><td>ESPC2_seq20</td><td>1</td><td>3</td><td>0</td><td>0</td><td>0.9909638554216867</td></tr>
+<tr><td>23</td><td>ESPC2_seq23</td><td>342</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>24</td><td>ESPC2_seq21</td><td>15</td><td>0</td><td>0</td><td>2</td><td>0.9939759036144579</td></tr>
+<tr><td>25</td><td>ESPC2_seq24</td><td>1</td><td>0</td><td>6</td><td>6</td><td>0.9644970414201184</td></tr>
+<tr><td>26</td><td>ESPC2_seq29</td><td>1</td><td>1</td><td>24</td><td>242</td><td>0.25</td></tr>
+<tr><td>27</td><td>ESPC2_seq26</td><td>18</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>28</td><td>ESPC2_seq27</td><td>12</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>29</td><td>ESPC2_seq33</td><td>188</td><td>0</td><td>0</td><td>81</td><td>0.7560240963855421</td></tr>
+<tr><td>30</td><td>ESPC2_seq31</td><td>11</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>31</td><td>ESPC2_seq30</td><td>43</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>32</td><td>ESPC2_seq34</td><td>115</td><td>0</td><td>0</td><td>27</td><td>0.9186746987951807</td></tr>
+<tr><td>33</td><td>ESPC2_seq32</td><td>564</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>34</td><td>ESPC2_seq35</td><td>1</td><td>0</td><td>4</td><td>4</td><td>0.9761904761904762</td></tr>
+<tr><td>35</td><td>ESPC2_seq41</td><td>10334</td><td>0</td><td>0</td><td>216</td><td>0.3493975903614458</td></tr>
+<tr><td>36</td><td>ESPC2_seq42</td><td>1</td><td>0</td><td>34</td><td>236</td><td>0.26229508196721313</td></tr>
+<tr><td>37</td><td>ESPC2_seq36</td><td>346</td><td>0</td><td>0</td><td>1</td><td>0.9969879518072289</td></tr>
+<tr><td>38</td><td>ESPC2_seq37</td><td>15</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>39</td><td>ESPC2_seq45</td><td>1</td><td>0</td><td>0</td><td>216</td><td>0.34545454545454546</td></tr>
+<tr><td>40</td><td>ESPC2_seq46</td><td>267</td><td>0</td><td>0</td><td>217</td><td>0.3463855421686747</td></tr>
+<tr><td>41</td><td>ESPC2_seq38</td><td>1</td><td>5</td><td>7</td><td>7</td><td>0.943952802359882</td></tr>
+<tr><td>42</td><td>ESPC2_seq39</td><td>1</td><td>6</td><td>28</td><td>28</td><td>0.8277777777777777</td></tr>
+<tr><td>43</td><td>ESPC2_seq40</td><td>40</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>44</td><td>ESPC2_seq44</td><td>112</td><td>0</td><td>0</td><td>111</td><td>0.6656626506024096</td></tr>
+<tr><td>45</td><td>ESPC2_seq48</td><td>1</td><td>0</td><td>26</td><td>203</td><td>0.36033519553072624</td></tr>
+<tr><td>46</td><td>ESPC2_seq43</td><td>1</td><td>2</td><td>0</td><td>0</td><td>0.9939759036144579</td></tr>
+<tr><td>47</td><td>ESPC2_seq50</td><td>1208</td><td>0</td><td>0</td><td>189</td><td>0.4307228915662651</td></tr>
+<tr><td>48</td><td>ESPC2_seq47</td><td>312</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>49</td><td>ESPC2_seq49</td><td>40</td><td>0</td><td>0</td><td>30</td><td>0.9096385542168675</td></tr>
+<tr><td>50</td><td>ESPC2_seq53</td><td>3</td><td>1</td><td>0</td><td>54</td><td>0.8343373493975904</td></tr>
+<tr><td>51</td><td>ESPC2_seq51</td><td>7</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>52</td><td>ESPC2_seq52</td><td>1</td><td>3</td><td>3</td><td>3</td><td>0.9731343283582089</td></tr>
+<tr><td>53</td><td>ESPC2_seq58</td><td>137</td><td>0</td><td>21</td><td>220</td><td>0.31728045325779036</td></tr>
+<tr><td>54</td><td>ESPC2_seq54</td><td>1</td><td>0</td><td>18</td><td>18</td><td>0.8971428571428571</td></tr>
+<tr><td>55</td><td>ESPC2_seq59</td><td>15</td><td>1</td><td>0</td><td>216</td><td>0.3463855421686747</td></tr>
+<tr><td>56</td><td>ESPC2_seq55</td><td>146</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>57</td><td>ESPC2_seq56</td><td>1</td><td>1</td><td>7</td><td>7</td><td>0.9557522123893806</td></tr>
+<tr><td>58</td><td>ESPC2_seq57</td><td>30</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>59</td><td>ESPC2_seq64</td><td>277</td><td>0</td><td>0</td><td>189</td><td>0.4307228915662651</td></tr>
+<tr><td>60</td><td>ESPC2_seq63</td><td>1</td><td>1</td><td>0</td><td>149</td><td>0.5481927710843374</td></tr>
+<tr><td>61</td><td>ESPC2_seq60</td><td>1</td><td>2</td><td>0</td><td>0</td><td>0.9939759036144579</td></tr>
+<tr><td>62</td><td>ESPC2_seq61</td><td>10</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>63</td><td>ESPC2_seq62</td><td>270</td><td>0</td><td>0</td><td>1</td><td>0.9969879518072289</td></tr>
+<tr><td>64</td><td>ESPC2_seq65</td><td>1</td><td>5</td><td>0</td><td>0</td><td>0.9849397590361446</td></tr>
+<tr><td>65</td><td>ESPC2_seq66</td><td>5</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>66</td><td>ESPC2_seq67</td><td>1024</td><td>0</td><td>0</td><td>27</td><td>0.9186746987951807</td></tr>
+<tr><td>67</td><td>ESPC2_seq70</td><td>608</td><td>0</td><td>0</td><td>135</td><td>0.5933734939759037</td></tr>
+<tr><td>68</td><td>ESPC2_seq71</td><td>1</td><td>1</td><td>68</td><td>238</td><td>0.2325</td></tr>
+<tr><td>69</td><td>ESPC2_seq69</td><td>448</td><td>0</td><td>0</td><td>54</td><td>0.8373493975903614</td></tr>
+<tr><td>70</td><td>ESPC2_seq68</td><td>1</td><td>2</td><td>0</td><td>0</td><td>0.9939759036144579</td></tr>
+<tr><td>71</td><td>ESPC2_seq74</td><td>214</td><td>0</td><td>0</td><td>216</td><td>0.3493975903614458</td></tr>
+<tr><td>72</td><td>ESPC2_seq75</td><td>464</td><td>0</td><td>0</td><td>215</td><td>0.35240963855421686</td></tr>
+<tr><td>73</td><td>ESPC2_seq72</td><td>1</td><td>1</td><td>74</td><td>167</td><td>0.4039408866995074</td></tr>
+<tr><td>74</td><td>ESPC2_seq73</td><td>1</td><td>6</td><td>8</td><td>8</td><td>0.9352941176470588</td></tr>
+<tr><td>75</td><td>ESPC2_seq82</td><td>1</td><td>0</td><td>1</td><td>201</td><td>0.3933933933933934</td></tr>
+<tr><td>76</td><td>ESPC2_seq76</td><td>1</td><td>2</td><td>0</td><td>0</td><td>0.9939759036144579</td></tr>
+<tr><td>77</td><td>ESPC2_seq77</td><td>54</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>78</td><td>ESPC2_seq78</td><td>1</td><td>3</td><td>0</td><td>0</td><td>0.9909638554216867</td></tr>
+<tr><td>79</td><td>ESPC2_seq79</td><td>1</td><td>2</td><td>18</td><td>18</td><td>0.8914285714285715</td></tr>
+<tr><td>80</td><td>ESPC2_seq80</td><td>7</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>81</td><td>ESPC2_seq81</td><td>4</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>82</td><td>ESPC2_seq84</td><td>77</td><td>0</td><td>0</td><td>146</td><td>0.5602409638554217</td></tr>
+<tr><td>83</td><td>ESPC2_seq89</td><td>151</td><td>0</td><td>0</td><td>244</td><td>0.26506024096385544</td></tr>
+<tr><td>84</td><td>ESPC2_seq85</td><td>125</td><td>0</td><td>6</td><td>139</td><td>0.5710059171597633</td></tr>
+<tr><td>85</td><td>ESPC2_seq83</td><td>188</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>86</td><td>ESPC2_seq93</td><td>1</td><td>0</td><td>0</td><td>189</td><td>0.4307228915662651</td></tr>
+<tr><td>87</td><td>ESPC2_seq94</td><td>1</td><td>0</td><td>5</td><td>221</td><td>0.3293768545994065</td></tr>
+<tr><td>88</td><td>ESPC2_seq86</td><td>1</td><td>3</td><td>95</td><td>95</td><td>0.5480093676814989</td></tr>
+<tr><td>89</td><td>ESPC2_seq87</td><td>8</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>90</td><td>ESPC2_seq90</td><td>17</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>91</td><td>ESPC2_seq88</td><td>1</td><td>5</td><td>16</td><td>16</td><td>0.8936781609195402</td></tr>
+<tr><td>92</td><td>ESPC2_seq91</td><td>5</td><td>2</td><td>0</td><td>0</td><td>0.9939759036144579</td></tr>
+<tr><td>93</td><td>ESPC2_seq98</td><td>282</td><td>0</td><td>0</td><td>216</td><td>0.3493975903614458</td></tr>
+<tr><td>94</td><td>ESPC2_seq99</td><td>209</td><td>0</td><td>24</td><td>281</td><td>0.14325842696629212</td></tr>
+<tr><td>95</td><td>ESPC2_seq92</td><td>21</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>96</td><td>ESPC2_seq95</td><td>1</td><td>2</td><td>0</td><td>0</td><td>0.9939759036144579</td></tr>
+<tr><td>97</td><td>ESPC2_seq96</td><td>13</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>98</td><td>ESPC2_seq97</td><td>102</td><td>1</td><td>0</td><td>0</td><td>0.9969879518072289</td></tr>
+<tr><td>99</td><td>ESPC2_seq100</td><td>1</td><td>3</td><td>0</td><td>0</td><td>0.9909638554216867</td></tr>
+<tr><td>100</td><td>ESPC2_seq107</td><td>4</td><td>0</td><td>0</td><td>218</td><td>0.3433734939759036</td></tr>
+<tr><td colspan='7' style='text-align:center;color:#888;'>... 还有 23314 条突变序列未显示</td></tr>
+
+</table>
+
+<footer>Generated by CARLIN 序列分析工具 v2.1.0</footer>
+</div>
+</body>
+</html>
