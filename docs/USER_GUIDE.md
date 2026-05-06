@@ -5,12 +5,13 @@
 1. [安装与配置](#安装与配置)
 2. [快速开始](#快速开始)
 3. [命令详解](#命令详解)
-4. [输入文件格式](#输入文件格式)
-5. [输出文件格式](#输出文件格式)
-6. [参数调整指南](#参数调整指南)
-7. [应用示例](#应用示例)
-8. [故障排除](#故障排除)
-9. [性能优化](#性能优化)
+4. [谱系示踪比对模式](#谱系示踪比对模式)
+5. [输入文件格式](#输入文件格式)
+6. [输出文件格式](#输出文件格式)
+7. [参数调整指南](#参数调整指南)
+8. [应用示例](#应用示例)
+9. [故障排除](#故障排除)
+10. [性能优化](#性能优化)
 
 ## 安装与配置
 
@@ -43,7 +44,7 @@ python carlin_tool.py --help
 
 ## 快速开始
 
-### 示例1：基本工作流程
+### 示例1：标准工作流程
 
 ```bash
 # 1. 将FASTQ转换为TSV格式
@@ -60,7 +61,29 @@ python carlin_tool.py align \
   --format json
 ```
 
-### 示例2：完整分析流程
+### 示例2：谱系示踪分析
+
+```bash
+# 谱系示踪模式（自动推断cutsite位置，过滤假阳性突变）
+python carlin_tool.py align \
+  --reference example_data/reference.fa \
+  --queries my_sample_queries.tsv \
+  --output my_sample_lt_results.json \
+  --lineage \
+  --report html
+
+# 参数微调
+python carlin_tool.py align \
+  --reference example_data/reference.fa \
+  --queries my_sample_queries.tsv \
+  --output my_sample_lt_results.json \
+  --lineage \
+  --cutsite-scale 1.0 \
+  --far-scale 8.0 \
+  --mutation-window 3
+```
+
+### 示例3：完整分析流程
 
 ```bash
 #!/bin/bash
@@ -82,36 +105,16 @@ python carlin_tool.py convert fastq-to-tsv \
   --output "${OUTPUT_PREFIX}_queries.tsv" \
   --sample-name "${SAMPLE_NAME}"
 
-# 步骤2: 序列比对
-echo "步骤2: 批量序列比对..."
+# 步骤2: 谱系示踪比对并生成报告
+echo "步骤2: 谱系示踪比对..."
 python carlin_tool.py align \
   --reference "${REFERENCE}" \
   --queries "${OUTPUT_PREFIX}_queries.tsv" \
   --output "${OUTPUT_PREFIX}_alignments.json" \
-  --format json
+  --lineage \
+  --report html
 
-# 步骤3: 生成统计摘要
-echo "步骤3: 生成统计摘要..."
-python -c "
-import json
-with open('${OUTPUT_PREFIX}_alignments.json') as f:
-    data = json.load(f)
-
-total = len(data)
-successful = len([r for r in data if 'error' not in r])
-failed = total - successful
-
-print(f'总计序列: {total}')
-print(f'成功比对: {successful}')
-print(f'失败比对: {failed}')
-
-if successful > 0:
-    scores = [r['score'] for r in data if 'score' in r and r['score'] is not None]
-    avg_score = sum(scores) / len(scores) if scores else 0
-    print(f'平均比对得分: {avg_score:.2f}')
-"
-
-echo "分析完成！"
+echo "分析完成！查看报告: ${OUTPUT_PREFIX}_alignments_report.html"
 ```
 
 ## 命令详解
@@ -157,7 +160,7 @@ python carlin_tool.py convert fastq-to-fasta \
 
 ### 比对命令 (align)
 
-并行批量比对查询序列到参考序列。自动利用多CPU核心加速处理。
+并行批量比对查询序列到参考序列。支持标准比对和谱系示踪比对两种模式。
 
 **必需选项**：
 - `--reference`: 参考序列FASTA文件
@@ -171,11 +174,21 @@ python carlin_tool.py convert fastq-to-fasta \
 - `--gap-extend`: gap延伸惩罚（默认: -0.1）
 - `--global`: 使用全局比对（默认使用半全局比对）
 
+**谱系示踪参数**：
+- `--lineage`: 启用谱系示踪比对模式
+- `--cutsite-scale`: cutsite区域gap惩罚倍率（默认: 1.0，越小越容易开gap）
+- `--flank-scale`: cutsite侧翼区gap惩罚倍率（默认: 2.0）
+- `--far-scale`: 远离cutsite区域gap惩罚倍率（默认: 6.0，越大gap越难开启）
+- `--flank-width`: cutsite侧翼范围bp（默认: 3）
+- `--mutation-window`: 保留点突变的cutsite窗口半径bp（默认: 3）
+- `--density-threshold`: mismatch密度阈值，超此阈值视为insertion（默认: 0.34）
+- `--cutsites`: cutsite位置配置文件（JSON格式），不指定则自动推断标准CARLIN结构
+
 **并行参数**：
 - `--threads`, `-t`: 并行进程数（默认：自动使用所有CPU核心）
 
 **输出选项**：
-- `--format`: 输出格式，可选 `json`、`tsv` 或 `all`（同时输出两种格式，默认: json）
+- `--format`: 输出格式，可选 `json`、`tsv` 或 `all`（默认: json）
 - `--report`: 生成突变分析报告，可选 `json` 或 `html`（默认: 不生成）
 - `--report-output`: 报告输出路径（默认: 基于 `--output` 文件名自动生成）
 
@@ -187,47 +200,148 @@ python carlin_tool.py align \
   --queries queries.tsv \
   --output alignments.json
 
-# 输出TSV格式
+# 谱系示踪模式
 python carlin_tool.py align \
   --reference ref.fasta \
   --queries queries.tsv \
-  --output results.tsv \
-  --format tsv
+  --output lt_results.json \
+  --lineage
 
-# 同时输出JSON和TSV
+# 谱系示踪模式+自定义参数
+python carlin_tool.py align \
+  --reference ref.fasta \
+  --queries queries.tsv \
+  --output lt_results.json \
+  --lineage \
+  --cutsite-scale 1.0 \
+  --far-scale 8.0 \
+  --flank-width 5 \
+  --mutation-window 4
+
+# 谱系示踪模式+手动指定cutsite
+python carlin_tool.py align \
+  --reference ref.fasta \
+  --queries queries.tsv \
+  --output lt_results.json \
+  --lineage \
+  --cutsites my_cutsites.json
+
+# 同时输出JSON和TSV，生成HTML报告
 python carlin_tool.py align \
   --reference ref.fasta \
   --queries queries.tsv \
   --output results/prefix \
-  --format all
-
-# 比对并生成HTML格式分析报告
-python carlin_tool.py align \
-  --reference ref.fasta \
-  --queries queries.tsv \
-  --output alignments.json \
+  --format all \
   --report html
-
-# 比对并生成JSON格式报告，指定报告路径
-python carlin_tool.py align \
-  --reference ref.fasta \
-  --queries queries.tsv \
-  --output alignments.json \
-  --report json \
-  --report-output my_report.json
-
-# 使用自定义参数和全局比对
-python carlin_tool.py align \
-  --reference ref.fasta \
-  --queries queries.fasta \
-  --output results.tsv \
-  --format tsv \
-  --match-score 3.0 \
-  --mismatch-penalty -5.0 \
-  --gap-open -1.5 \
-  --gap-extend -0.05 \
-  --global
 ```
+
+## 谱系示踪比对模式
+
+### 适用场景
+
+谱系示踪比对模式（`--lineage`）专为**多靶点基因编辑谱系示踪实验**设计，如CARLIN系统。其核心假设是：
+
+1. 扩增子由**多个串联的target**组成，每个target包含**保守区 + cutsite**
+2. 基因编辑（切割）主要发生在cutsite区域
+3. 远离cutsite的mismatch很可能是**测序/PCR错误**而非真实突变
+4. 连续高密度的mismatch实际上是**insertion事件**
+
+### 工作原理
+
+```
+输入序列
+    │
+    ▼
+┌─────────────────────────────────────┐
+│ Step 1: 位置感知DP比对              │
+│  ┌─────────────────────────────┐   │
+│  │ cutsite处:    gap_open=-2.0 │   │
+│  │ 侧翼±3bp:    gap_open=-4.0 │   │
+│  │ 保守区域:    gap_open=-12.0│   │
+│  └─────────────────────────────┘   │
+└─────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────┐
+│ Step 2: 高密度mismatch→indel转换    │
+│  滑动窗口检测 >34% mismatch+≥2错配  │
+│  → 将ref碱基替换为gap（insertion）  │
+└─────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────┐
+│ Step 3: 区域感知点突变过滤          │
+│  cutsite±3bp内 → 保留               │
+│  紧邻gap的突变 → 保留（例外规则）   │
+│  其余 → 矫正为ref碱基               │
+└─────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────┐
+│ Step 4: 跨靶点重复序列矫正          │
+│  检测11组重复序列（15bp~4bp）       │
+│  将错误匹配到远端副本的碱基搬回     │
+│  - ACTGCACGACAGTCG (T1↔T9, 15bp)   │
+│  - ACTCGCG (T2↔T7, 7bp)            │
+│  - ACAGTCG (T1↔T3↔T9, 7bp)         │
+│  - GAGCGC / GCGACT / GATACG / ...   │
+│  - GACGA (T1↔T3, 5bp)              │
+│  - ACTA (T9↔T3, 4bp)               │
+└─────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────┐
+│ Step 5: 小片段跨靶点矫正            │
+│  - TAGTAT → Target8                 │
+│  - 单碱基A: Target9→Target1         │
+└─────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────┐
+│ Step 6: 孤立匹配清除                │
+│  删除区域中的孤立单碱基匹配         │
+│  合并连续deletion片段               │
+└─────────────────────────────────────┘
+    │
+    ▼
+输出结果
+```
+
+### cutsite位置配置
+
+#### 自动推断（默认）
+标准CARLIN扩增子（332bp）自动识别10个cutsite：
+```bash
+python carlin_tool.py align --lineage ...
+```
+
+#### 手动指定（JSON格式）
+```json
+{
+  "cutsites": [
+    {"name": "Target1", "start": 41, "end": 47},
+    {"name": "Target2", "start": 68, "end": 74},
+    {"name": "Target3", "start": 95, "end": 101},
+    {"name": "Target4", "start": 122, "end": 128},
+    {"name": "Target5", "start": 149, "end": 155},
+    {"name": "Target6", "start": 176, "end": 182},
+    {"name": "Target7", "start": 203, "end": 209},
+    {"name": "Target8", "start": 230, "end": 236},
+    {"name": "Target9", "start": 257, "end": 263},
+    {"name": "Target10", "start": 284, "end": 290}
+  ]
+}
+```
+cutsite坐标为0-based、inclusive。
+
+### 比对结果解读
+
+谱系示踪模式在标准比对统计基础上增加以下指标：
+
+| 指标 | 说明 |
+|------|------|
+| `n_mutations_corrected` | 被矫正的假阳性点突变数量 |
+| `dense_regions_converted` | 是否触发了高密度mismatch→indel转换 |
 
 ## 输入文件格式
 
@@ -289,7 +403,7 @@ IIIIIIII
 ## 输出文件格式
 
 ### JSON格式（默认）
-完整的比对结果，包含所有详细信息。
+完整的比对结果，包含所有详细信息。谱系示踪模式在后处理矫正后输出最终对齐结果。
 
 **结构**：
 ```json
@@ -303,22 +417,32 @@ IIIIIIII
     "aligned_ref": "TATGTGTGGGAGGGCTAAGAGGCCGCCGGACTGC...",
     "aligned_query": "TCTGTGTGGGAGGGCTAAGAGGCCGCCGGACTGC...",
     "stats": {
-      "matches": 331,
-      "mismatches": 1,
-      "gaps_in_ref": 0,
+      "matches": 329,
+      "mismatches": 0,
+      "gaps_in_ref": 3,
       "gaps_in_query": 0,
-      "gap_blocks_ref": [],
+      "gap_blocks_ref": [3],
       "gap_blocks_query": [],
-      "avg_gap_len_ref": 0,
+      "avg_gap_len_ref": 3.0,
       "avg_gap_len_query": 0,
-      "alignment_length": 332,
-      "similarity": 0.997,
-      "identity": 0.997,
-      "score": 659.0
+      "alignment_length": 335,
+      "similarity": 0.982,
+      "identity": 1.0,
+      "score": 659.0,
+      "n_mutations_corrected": 0,
+      "dense_regions_converted": false
     }
   }
 ]
 ```
+
+**字段说明**：
+- `aligned_ref`: 经后处理矫正后的参考序列对齐（含gap符号`-`）
+- `aligned_query`: 经后处理矫正后的查询序列对齐（含gap符号`-`）
+- `stats.n_mutations_corrected`: 被区域感知点突变过滤矫正的碱基数
+- `stats.dense_regions_converted`: 是否触发了高密度mismatch→indel转换
+
+**后处理矫正**：alin后的序列会依次经过跨靶点重复序列矫正、小片段跨靶点矫正和孤立匹配清除三个步骤，确保多靶点谱系示踪数据中因重复序列导致的错误匹配被纠正。
 
 ### TSV格式
 简化的表格格式，便于统计分析。
@@ -334,11 +458,9 @@ IIIIIIII
 - `aligned_query`: 对齐后的查询序列（gap位置为`-`）
 - `error`: 错误信息（如果比对失败）
 
-> 使用 `--format all` 可同时输出JSON和TSV两种格式，无需重复运行。
-
 ### 分析报告 (--report)
 
-使用 `--report json` 或 `--report html` 可生成突变分析报告，包含：
+使用 `--report json` 或 `--report html` 可生成突变分析报告。
 
 **报告内容**：
 - **摘要统计**: 总序列数、总Reads数、成功/失败比对、编辑效率
@@ -355,77 +477,27 @@ IIIIIIII
   - 最大插入/删除长度
 - **突变序列明细**: 每条突变序列的具体信息（最多100条）
 
-**JSON报告示例**：
-```json
-{
-  "tool": "CARLIN序列分析工具",
-  "version": "2.1.0",
-  "summary": {
-    "total_sequences": 3284,
-    "total_reads_all": 6055,
-    "successful_alignments": 3276,
-    "failed_alignments": 8,
-    "total_reads_successful": 6041,
-    "mutated_sequences": 1409,
-    "unmutated_sequences": 1867,
-    "mutated_reads": 2598,
-    "editing_efficiency_pct": 43.01
-  },
-  "mutation_types": {
-    "only_insertion": {"sequences": 12, "reads": 18},
-    "only_deletion": {"sequences": 856, "reads": 1580},
-    "only_substitution": {"sequences": 285, "reads": 524},
-    "insertion_and_deletion": {"sequences": 97, "reads": 175},
-    "insertion_and_substitution": {"sequences": 5, "reads": 9},
-    "deletion_and_substitution": {"sequences": 148, "reads": 285},
-    "insertion_deletion_substitution": {"sequences": 6, "reads": 7}
-  },
-  "mutation_stats": {
-    "total_point_mutations": 542,
-    "total_insertion_events": 124,
-    "total_deletion_events": 1176,
-    "avg_insertion_length": 3.42,
-    "avg_deletion_length": 12.87,
-    "max_insertion_length": 28,
-    "max_deletion_length": 156
-  }
-}
-```
+**示例**：
+```bash
+# 标准比对 + HTML报告
+python carlin_tool.py align \
+  --reference ref.fasta \
+  --queries queries.tsv \
+  --output results.json \
+  --report html
 
-**HTML报告**: 自包含的HTML文件，包含卡片式摘要、彩色表格和可视化布局，可直接在浏览器中打开查看。
+# 谱系示踪比对 + HTML报告
+python carlin_tool.py align \
+  --reference ref.fasta \
+  --queries queries.tsv \
+  --output results.json \
+  --lineage \
+  --report html
+```
 
 ## 参数调整指南
 
-### 针对不同应用场景的参数建议
-
-#### 1. CARLIN基因编辑分析
-检测大片段缺失和点突变：
-```bash
---match-score 2.0
---mismatch-penalty -3.0
---gap-open -1.5      # 降低开启惩罚，鼓励检测缺失
---gap-extend -0.05   # 降低延伸惩罚，鼓励长连续gap
-```
-
-#### 2. 严格序列验证
-高严格度匹配，减少假阳性：
-```bash
---match-score 3.0    # 提高匹配得分
---mismatch-penalty -5.0  # 增加错配惩罚
---gap-open -3.0      # 增加gap惩罚
---gap-extend -0.5    # 增加延伸惩罚
---global             # 使用全局比对
-```
-
-#### 3. 长序列比对
-针对长序列（>500bp）优化：
-```bash
---match-score 1.0    # 降低匹配得分权重
---gap-open -0.5      # 显著降低gap惩罚
---gap-extend -0.01   # 极低延伸惩罚
-```
-
-### 参数影响分析
+### 标准比对参数
 
 | 参数 | 增加效果 | 减少效果 |
 |------|----------|----------|
@@ -434,13 +506,83 @@ IIIIIIII
 | gap_open | 减少gap，增加错配 | 增加gap，减少错配 |
 | gap_extend | 减少长gap，增加短gap | 增加长gap，减少短gap |
 
+### 谱系示踪参数
+
+#### `--cutsite-scale`（默认：1.0）
+cutsite内部的gap惩罚倍率。越小越容易在cutsite处开启gap：
+- **0.5**: gap_open = -1.0（非常容易开gap）
+- **1.0**: gap_open = -2.0（基准）
+- **2.0**: gap_open = -4.0（保守，减少cutsite处gap）
+
+#### `--far-scale`（默认：6.0）
+保守/骨架区域的gap惩罚倍率。越大越抑制gap：
+- **4.0**: gap_open = -8.0（相对宽松）
+- **6.0**: gap_open = -12.0（基准，强烈抑制）
+- **10.0**: gap_open = -20.0（极端抑制）
+
+#### `--mutation-window`（默认：3）
+保留点突变的窗口大小（bp）。cutsite两侧各保留此范围内的点突变：
+- **2**: 更严格的突变过滤（cutsite±2bp）
+- **3**: 默认（cutsite±3bp）
+- **5**: 更宽松（cutsite±5bp）
+
+#### `--density-threshold`（默认：0.34）
+mismatch密度阈值。连续区域中mismatch比例超过此值则视为insertion：
+- **0.25**: 更敏感，容易触发转换
+- **0.34**: 默认平衡值（略高于1/3）
+- **0.50**: 更保守，仅极高密度才转换
+
+#### `--flank-scale`（默认：2.0）
+cutsite侧翼区域（±flank_width范围内）的gap惩罚倍率：
+- **1.0**: 与cutsite相同（宽松）
+- **2.0**: 中等抑制（默认）
+- **4.0**: 强抑制
+
+### 不同应用场景的参数建议
+
+#### 1. CARLIN谱系示踪分析（推荐）
+```bash
+--lineage \
+--cutsite-scale 1.0 \
+--flank-scale 2.0 \
+--far-scale 6.0 \
+--mutation-window 3 \
+--density-threshold 0.34
+```
+
+#### 2. 严格突变检测（降低假阳性）
+```bash
+--lineage \
+--cutsite-scale 1.0 \
+--far-scale 8.0 \
+--mutation-window 2 \
+--density-threshold 0.40
+```
+
+#### 3. 宽松检测（捕获更多事件）
+```bash
+--lineage \
+--cutsite-scale 0.8 \
+--far-scale 4.0 \
+--mutation-window 4 \
+--density-threshold 0.30
+```
+
+#### 4. 标准比对（常规用途）
+```bash
+--match-score 2.0 \
+--mismatch-penalty -3.0 \
+--gap-open -2.0 \
+--gap-extend -0.1
+```
+
 ## 应用示例
 
-### 示例1：CARLIN编辑效率分析
+### 示例1：谱系示踪编辑效率分析
 
 ```bash
 #!/bin/bash
-# CARLIN编辑效率分析脚本
+# 谱系示踪编辑效率分析脚本
 
 REFERENCE="data/CARLIN_reference.fasta"
 FASTQ="data/EPSC2_L1_1.fq.gz"
@@ -457,20 +599,17 @@ python carlin_tool.py convert fastq-to-tsv \
   --output "${OUTPUT_DIR}/${SAMPLE}_queries.tsv" \
   --sample-name "${SAMPLE}"
 
-# 批量比对（使用CARLIN优化参数）并生成HTML分析报告
-echo "运行序列比对..."
+# 谱系示踪比对 + HTML分析报告
+echo "运行谱系示踪比对..."
 python carlin_tool.py align \
   --reference "${REFERENCE}" \
   --queries "${OUTPUT_DIR}/${SAMPLE}_queries.tsv" \
-  --output "${OUTPUT_DIR}/${SAMPLE}_alignments.json" \
-  --gap-open -1.5 \
-  --gap-extend -0.05 \
+  --output "${OUTPUT_DIR}/${SAMPLE}_results" \
+  --format all \
+  --lineage \
   --report html
 
-echo "分析完成！查看报告: ${OUTPUT_DIR}/${SAMPLE}_alignments_report.html"
-```
-
-比对的JSON结果和HTML报告在同一目录下，报告中已包含编辑效率（约43%）和详细的突变统计信息。也可以单独使用 `--format all` 同时输出TSV格式用于自定义统计分析。
+echo "分析完成！查看报告: ${OUTPUT_DIR}/${SAMPLE}_results_report.html"
 ```
 
 ### 示例2：批量处理多个样本
@@ -482,33 +621,102 @@ echo "分析完成！查看报告: ${OUTPUT_DIR}/${SAMPLE}_alignments_report.htm
 REFERENCE="reference.fasta"
 SAMPLES=("sample1" "sample2" "sample3" "sample4")
 
-for SAMPLE in \"${SAMPLES[@]}\"; do
-    echo \"处理样本: ${SAMPLE}\"
+for SAMPLE in "${SAMPLES[@]}"; do
+    echo "处理样本: ${SAMPLE}"
     
-    FASTQ=\"data/${SAMPLE}.fastq.gz\"
-    OUTPUT_PREFIX=\"results/${SAMPLE}\"
+    FASTQ="data/${SAMPLE}.fastq.gz"
+    OUTPUT_PREFIX="results/${SAMPLE}"
     
     # 检查文件是否存在
-    if [ ! -f \"${FASTQ}\" ]; then
-        echo \"警告: 文件不存在 - ${FASTQ}\"
+    if [ ! -f "${FASTQ}" ]; then
+        echo "警告: 文件不存在 - ${FASTQ}"
         continue
     fi
     
-    # 转换和比对
+    # 转换和谱系示踪比对
     python carlin_tool.py convert fastq-to-tsv \
-        --fastq \"${FASTQ}\" \
-        --output \"${OUTPUT_PREFIX}_queries.tsv\" \
-        --sample-name \"${SAMPLE}\"
+        --fastq "${FASTQ}" \
+        --output "${OUTPUT_PREFIX}_queries.tsv" \
+        --sample-name "${SAMPLE}"
     
     python carlin_tool.py align \
-        --reference \"${REFERENCE}\" \
-        --queries \"${OUTPUT_PREFIX}_queries.tsv\" \
-        --output \"${OUTPUT_PREFIX}_alignments.json\"
+        --reference "${REFERENCE}" \
+        --queries "${OUTPUT_PREFIX}_queries.tsv" \
+        --output "${OUTPUT_PREFIX}_results.json" \
+        --lineage
     
-    echo \"完成: ${SAMPLE}\"
+    echo "完成: ${SAMPLE}"
 done
 
-echo \"所有样本处理完成！\"
+echo "所有样本处理完成！"
+```
+
+### 示例3：不同参数对比分析
+
+```bash
+#!/bin/bash
+# 对比不同参数设置的效果
+
+REFERENCE="reference.fasta"
+QUERIES="queries.tsv"
+OUTPUT_DIR="comparison"
+
+mkdir -p "${OUTPUT_DIR}"
+
+# 标准比对
+python carlin_tool.py align \
+  --reference "${REFERENCE}" \
+  --queries "${QUERIES}" \
+  --output "${OUTPUT_DIR}/standard.json"
+echo "标准比对完成"
+
+# 谱系示踪 - 默认参数
+python carlin_tool.py align \
+  --reference "${REFERENCE}" \
+  --queries "${QUERIES}" \
+  --output "${OUTPUT_DIR}/lineage_default.json" \
+  --lineage
+echo "谱系示踪(默认)完成"
+
+# 谱系示踪 - 严格模式
+python carlin_tool.py align \
+  --reference "${REFERENCE}" \
+  --queries "${QUERIES}" \
+  --output "${OUTPUT_DIR}/lineage_strict.json" \
+  --lineage \
+  --far-scale 10.0 \
+  --mutation-window 2
+echo "谱系示踪(严格)完成"
+```
+
+### 示例4：自定义cutsite配置文件
+
+```bash
+# 创建cutsite配置文件
+cat > my_cutsites.json << 'EOF'
+{
+  "cutsites": [
+    {"name": "Target1", "start": 41, "end": 47},
+    {"name": "Target2", "start": 68, "end": 74},
+    {"name": "Target3", "start": 95, "end": 101},
+    {"name": "Target4", "start": 122, "end": 128},
+    {"name": "Target5", "start": 149, "end": 155},
+    {"name": "Target6", "start": 176, "end": 182},
+    {"name": "Target7", "start": 203, "end": 209},
+    {"name": "Target8", "start": 230, "end": 236},
+    {"name": "Target9", "start": 257, "end": 263},
+    {"name": "Target10", "start": 284, "end": 290}
+  ]
+}
+EOF
+
+# 使用配置文件
+python carlin_tool.py align \
+  --reference ref.fasta \
+  --queries queries.tsv \
+  --output results.json \
+  --lineage \
+  --cutsites my_cutsites.json
 ```
 
 ## 故障排除
@@ -542,18 +750,25 @@ pip install biopython
 - 调整比对参数（参考[参数调整指南](#参数调整指南)）
 - 检查参考序列和查询序列格式
 - 验证序列质量
+- 谱系示踪模式下检查cutsite位置是否正确
 
-#### 5. 处理速度慢
+#### 5. 谱系示踪模式下cutsite检测失败
+**问题**：`--lineage` 无法自动推断cutsite位置。
+**解决**：
+- 确认参考序列为标准332bp CARLIN扩增子
+- 使用 `--cutsites` 手动指定cutsite位置
+- 检查参考序列是否正确（以Primer5开始，Primer3结束）
+
+#### 6. 处理速度慢
 **问题**：大型数据集处理时间过长。
 **解决**：
 - 使用更高效的硬件
 - 分批处理数据
-- 考虑使用并行处理（见[性能优化](#性能优化)）
+- 谱系示踪模式比标准模式慢约10-15%（额外后处理）
 
 ### 调试模式
 
 对于复杂问题，可以添加调试输出：
-
 ```python
 # 在carlin_tool.py中添加调试代码
 import logging
@@ -590,7 +805,7 @@ python carlin_tool.py align \
 | 4 | ~25% | ~4x |
 | 8 | ~15% | ~6-7x |
 
-> 注：加速比受CPU核心数和序列长度影响。序列越长，并行效率越高。
+> 注：加速比受CPU核心数和序列长度影响。序列越长，并行效率越高。谱系示踪模式比标准模式慢约10-15%。
 
 ### 2. 分批处理大型数据集
 
@@ -618,12 +833,11 @@ for BATCH in "${OUTPUT_DIR}"/batch_*; do
     python carlin_tool.py align \
         --reference "${REFERENCE}" \
         --queries "${BATCH}" \
-        --output "${OUTPUT_FILE}"
+        --output "${OUTPUT_FILE}" \
+        --lineage
 done
 
-# 合并结果
-echo "合并结果..."
-# 合并JSON文件的代码...
+echo "批量处理完成！"
 ```
 
 ### 3. 使用外部并行工具
@@ -649,7 +863,8 @@ process_sample() {
     python carlin_tool.py align \
         --reference "${REFERENCE}" \
         --queries "temp/${SAMPLE}.tsv" \
-        --output "${OUTPUT}"
+        --output "${OUTPUT}" \
+        --lineage
     
     echo "完成: ${SAMPLE}"
 }
@@ -664,77 +879,6 @@ parallel -j 4 process_sample ::: "${SAMPLES[@]}"
 
 # 清理临时文件
 rm -rf temp
-```
-
-### 4. 内存使用优化
-
-对于极大序列：
-- 使用`--stats-only`模式（如果实现）
-- 分批处理序列
-- 考虑使用磁盘缓存
-
-## 高级功能
-
-### 自定义统计计算
-
-```python
-#!/usr/bin/env python3
-"""
-自定义统计计算示例
-"""
-
-import json
-import pandas as pd
-import numpy as np
-
-def analyze_alignments(json_file):
-    """分析比对结果"""
-    
-    with open(json_file) as f:
-        data = json.load(f)
-    
-    # 转换为DataFrame
-    df = pd.DataFrame([
-        {
-            'readName': r['readName'],
-            'score': r.get('score', np.nan),
-            'matches': r['stats']['matches'] if r.get('stats') else np.nan,
-            'mismatches': r['stats']['mismatches'] if r.get('stats') else np.nan,
-            'gaps': r['stats']['gaps_in_query'] if r.get('stats') else np.nan,
-            'similarity': r['stats']['similarity'] if r.get('stats') else np.nan,
-            'has_error': 'error' in r
-        }
-        for r in data
-    ])
-    
-    # 基本统计
-    print(f"总序列数: {len(df)}")
-    print(f"成功比对: {len(df[~df['has_error']])}")
-    print(f"失败比对: {len(df[df['has_error']])}")
-    
-    if len(df[~df['has_error']]) > 0:
-        valid_df = df[~df['has_error']]
-        
-        print(f"\n比对得分统计:")
-        print(f"  平均得分: {valid_df['score'].mean():.2f}")
-        print(f"  最高得分: {valid_df['score'].max():.2f}")
-        print(f"  最低得分: {valid_df['score'].min():.2f}")
-        
-        print(f"\n突变统计:")
-        mutated = valid_df[(valid_df['mismatches'] > 0) | (valid_df['gaps'] > 0)]
-        print(f"  突变序列数: {len(mutated)}")
-        print(f"  突变比例: {len(mutated)/len(valid_df)*100:.1f}%")
-        
-        print(f"\nGap分布:")
-        gap_counts = valid_df['gaps'].value_counts().sort_index()
-        for gaps, count in gap_counts.items():
-            print(f"  {gaps}个gap: {count}序列 ({count/len(valid_df)*100:.1f}%)")
-    
-    return df
-
-if __name__ == "__main__":
-    results_df = analyze_alignments("alignments.json")
-    results_df.to_csv("alignment_statistics.csv", index=False)
 ```
 
 ## 技术支持
@@ -763,4 +907,4 @@ python carlin_tool.py --version
 
 ---
 
-*本使用手册最后更新：2026年4月23日（v2.1.0：新增 --format all、--report 分析报告）*
+*本使用手册最后更新：2026年4月27日（v2.2.0：新增谱系示踪比对模式 `--lineage`）*|
