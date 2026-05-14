@@ -1,0 +1,6 @@
+include templates/*.html
+include docs/*
+include example_data/*
+graft tests/
+include README.md
+include requirements.txt

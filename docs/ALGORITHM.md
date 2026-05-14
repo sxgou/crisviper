@@ -137,7 +137,7 @@ $$
 |------|-------------|-------------|------|
 | Cutsite内部 | 1.0 | -2.0 | 鼓励gap检测 |
 | 侧翼 ±3bp | 2.0 | -4.0 | 中等抑制 |
-| 保守/骨架区 | 6.0 | -12.0 | 强烈抑制gap |
+| 保守/骨架区 | 2.0（默认） | -4.0 | 一定抑制（用户可通过 `far_scale` 参数调节，增大则增强压制） |
 
 ### 修改后的DP递推
 
@@ -173,7 +173,7 @@ for offset in range(1, flank_width + 1):
     gap_open[cs_start - offset] = base_gap_open * 2.0
     gap_open[cs_end + offset] = base_gap_open * 2.0
 
-# 其余位置: far_scale 惩罚 (默认 6x)
+# 其余位置: far_scale 惩罚 (默认 2x)
 gap_open[:] = base_gap_open * far_scale  # 初始化
 
 # 然后覆盖cutsite和侧翼的较小值

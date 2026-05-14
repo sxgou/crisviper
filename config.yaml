@@ -1,0 +1,20 @@
+# Lineage Tracer — Snakemake configuration example
+# Usage: snakemake --configfile config.yaml --cores all
+
+# Required
+reference: "reference.fasta"
+
+# Choose one mode:
+# (1) Bulk (single FASTQ)
+fastq: "reads.fastq.gz"
+
+# (2) Single-cell (paired 10x FASTQ)
+# fastq_r1: "R1.fastq.gz"
+# fastq_r2: "R2.fastq.gz"
+
+# Optional
+sample: "experiment1"       # sample name prefix
+outdir: "results"           # output directory
+threads: 8                  # alignment threads (default: all)
+lineage: false              # enable lineage tracing mode
+report: "html"              # report format: json or html

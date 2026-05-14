@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CARLIN 序列分析报告</title>
+<style>
+  body { font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background: #f5f7fa; color: #333; }
+  .container { max-width: 960px; margin: 0 auto; }
+  h1 { color: #1a1a2e; border-bottom: 3px solid #4a6cf7; padding-bottom: 10px; }
+  h2 { color: #1a1a2e; margin-top: 30px; }
+  .meta { color: #666; font-size: 14px; margin-bottom: 20px; }
+  .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin: 20px 0; }
+  .card { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); text-align: center; }
+  .card .value { font-size: 28px; font-weight: 700; color: #4a6cf7; }
+  .card .label { font-size: 13px; color: #888; margin-top: 5px; }
+  .card.highlight { background: #4a6cf7; color: #fff; }
+  .card.highlight .value { color: #fff; }
+  .card.highlight .label { color: rgba(255,255,255,0.85); }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin: 15px 0; }
+  th { background: #4a6cf7; color: #fff; padding: 12px 15px; text-align: left; font-weight: 600; }
+  td { padding: 10px 15px; border-bottom: 1px solid #eee; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #f0f4ff; }
+  .section { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin: 15px 0; }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  .stat-item { padding: 8px 12px; background: #f8f9fc; border-radius: 6px; }
+  .stat-item .s-label { font-size: 12px; color: #888; }
+  .stat-item .s-value { font-size: 18px; font-weight: 600; color: #333; }
+  .chart-box { background: #fff; border-radius: 10px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin: 15px 0; text-align: center; }
+  .chart-box .chart-img { max-width: 100%; height: auto; border-radius: 6px; cursor: zoom-in; }
+  .chart-row { display: flex; flex-wrap: wrap; gap: 15px; margin: 15px 0; }
+  .chart-row .chart-box { flex: 1; min-width: 300px; }
+  footer { text-align: center; color: #aaa; font-size: 12px; margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; }
+  .chart-scroll { overflow-x: auto; overflow-y: hidden; max-width: 100%; }
+  .chart-scroll .allele-img { max-width: none; cursor: zoom-in; }
+  .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 9999; cursor: zoom-out; }
+  .modal-overlay.active { display: flex; align-items: center; justify-content: center; }
+  .modal-content { position: relative; max-width: 95vw; max-height: 95vh; overflow: auto; cursor: default; background: transparent; }
+  .modal-content img { display: block; max-width: none; width: auto; height: auto; border-radius: 4px; box-shadow: 0 4px 30px rgba(0,0,0,0.3); }
+  .modal-close { position: absolute; top: -36px; right: 0; color: #fff; font-size: 28px; cursor: pointer; font-weight: bold; line-height: 1; background: none; border: none; padding: 4px 12px; border-radius: 4px; }
+  .modal-close:hover { background: rgba(255,255,255,0.15); }
+  .modal-hint { position: absolute; bottom: -28px; left: 0; color: rgba(255,255,255,0.5); font-size: 13px; }
+</style>
+<script>
+  function openModal(imgEl) {
+    var overlay = document.getElementById('modalOverlay');
+    var modalImg = document.getElementById('modalImg');
+    modalImg.src = imgEl.src;
+    modalImg.style.transform = 'scale(1)';
+    modalImg.style.marginLeft = '0px';
+    modalImg.style.marginTop = '0px';
+    overlay.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeModal() {
+    document.getElementById('modalOverlay').classList.remove('active');
+    document.body.style.overflow = '';
+  }
+  document.addEventListener('DOMContentLoaded', function() {
+    var overlay = document.getElementById('modalOverlay');
+    var modalImg = document.getElementById('modalImg');
+    var scale = 1;
+    overlay.addEventListener('click', function(e) {
+      if (e.target === overlay) closeModal();
+    });
+    overlay.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      var delta = e.deltaY > 0 ? -0.1 : 0.1;
+      scale = Math.max(0.2, Math.min(10, scale + delta));
+      modalImg.style.transform = 'scale(' + scale + ')';
+    }, { passive: false });
+    overlay.addEventListener('dblclick', function() {
+      scale = 1;
+      modalImg.style.transform = 'scale(1)';
+      modalImg.style.marginLeft = '0px';
+      modalImg.style.marginTop = '0px';
+    });
+    var isDragging = false, startX, startY, origX = 0, origY = 0;
+    modalImg.addEventListener('mousedown', function(e) {
+      if (e.button !== 0) return;
+      isDragging = true;
+      startX = e.clientX - origX;
+      startY = e.clientY - origY;
+      modalImg.style.cursor = 'grabbing';
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', function(e) {
+      if (!isDragging) return;
+      origX = e.clientX - startX;
+      origY = e.clientY - startY;
+      modalImg.style.marginLeft = origX + 'px';
+      modalImg.style.marginTop = origY + 'px';
+    });
+    document.addEventListener('mouseup', function() {
+      isDragging = false;
+      modalImg.style.cursor = 'default';
+    });
+  });
+</script>
+</head>
+<body>
+<div class="container">
+<h1>&#x1F52C; CARLIN 序列分析报告</h1>
+<div class="meta">生成时间: {{ generation_time }} | 工具版本: {{ report.version }}</div>
+
+<div class="summary-cards">
+  <div class="card">
+    <div class="value">{{ report.summary.total_sequences }}</div>
+    <div class="label">总序列数</div>
+  </div>
+  <div class="card">
+    <div class="value">{{ report.summary.total_reads_all }}</div>
+    <div class="label">总Reads数</div>
+  </div>
+  <div class="card">
+    <div class="value">{{ report.summary.successful_alignments }}</div>
+    <div class="label">成功比对</div>
+  </div>
+  <div class="card highlight">
+    <div class="value">{{ "%.2f"|format(report.summary.editing_efficiency_pct) }}%</div>
+    <div class="label">编辑效率</div>
+  </div>
+</div>
+
+<div class="summary-cards">
+  <div class="card">
+    <div class="value">{{ report.summary.mutated_sequences }}</div>
+    <div class="label">突变序列数</div>
+  </div>
+  <div class="card">
+    <div class="value">{{ report.summary.mutated_reads }}</div>
+    <div class="label">突变Reads数</div>
+  </div>
+  <div class="card">
+    <div class="value">{{ report.summary.unmutated_sequences }}</div>
+    <div class="label">未突变序列数</div>
+  </div>
+  <div class="card">
+    <div class="value">{{ report.summary.failed_alignments }}</div>
+    <div class="label">比对失败</div>
+  </div>
+</div>
+
+{% if charts %}
+<h2>Reads &amp; Alignment Overview</h2>
+<div class="chart-row">
+  <div class="chart-box">{{ charts.reads_dist|safe }}</div>
+  <div class="chart-box">{{ charts.align_rate|safe }}</div>
+</div>
+<div class="chart-box">{{ charts.length_dist|safe }}</div>
+{% endif %}
+
+<h2>&#x1F4CA; 突变类型分布</h2>
+<table>
+<tr><th>突变类型</th><th>序列数</th><th>序列占比</th><th>Reads数</th><th>Reads占比</th></tr>
+{% for row in mutation_type_rows %}
+<tr>
+  <td>{{ row.label }}</td>
+  <td>{{ row.seq_count }}</td><td>{{ row.seq_pct }}</td>
+  <td>{{ row.reads_count }}</td><td>{{ row.reads_pct }}</td>
+</tr>
+{% endfor %}
+</table>
+
+{% if charts %}
+<h2>Mutation Overview</h2>
+<div class="chart-row">
+  <div class="chart-box">{{ charts.mutation_seq_pie|safe }}</div>
+  <div class="chart-box">{{ charts.mutation_reads_pie|safe }}</div>
+</div>
+<div class="chart-row">
+  <div class="chart-box">{{ charts.mutation_type|safe }}</div>
+  <div class="chart-box">{{ charts.mutation_composition|safe }}</div>
+</div>
+{% endif %}
+
+<h2>&#x1F4CF; 突变统计指标</h2>
+<div class="section">
+<div class="stat-grid">
+  {% set ms = report.mutation_stats %}
+  <div class="stat-item">
+    <div class="s-label">点突变总数</div>
+    <div class="s-value">{{ ms.total_point_mutations }}</div>
+  </div>
+  <div class="stat-item">
+    <div class="s-label">插入事件数</div>
+    <div class="s-value">{{ ms.total_insertion_events }}</div>
+  </div>
+  <div class="stat-item">
+    <div class="s-label">删除事件数</div>
+    <div class="s-value">{{ ms.total_deletion_events }}</div>
+  </div>
+  <div class="stat-item">
+    <div class="s-label">平均插入长度</div>
+    <div class="s-value">{{ ms.avg_insertion_length }} bp</div>
+  </div>
+  <div class="stat-item">
+    <div class="s-label">平均删除长度</div>
+    <div class="s-value">{{ ms.avg_deletion_length }} bp</div>
+  </div>
+  <div class="stat-item">
+    <div class="s-label">最大插入长度</div>
+    <div class="s-value">{{ ms.max_insertion_length }} bp</div>
+  </div>
+  <div class="stat-item">
+    <div class="s-label">最大删除长度</div>
+    <div class="s-value">{{ ms.max_deletion_length }} bp</div>
+  </div>
+</div>
+</div>
+
+{% if charts %}
+<h2>Indel Length &amp; Position Distribution</h2>
+<div class="chart-box">{{ charts.indel_length|safe }}</div>
+<div class="chart-box">{{ charts.indel_position|safe }}</div>
+
+<h2>Allele Heatmap (Top {{ allele_top_n }})</h2>
+<div class="chart-box">{{ charts.allele_heatmap|safe }}</div>
+{% endif %}
+
+<h2>&#x1F4CB; 突变序列明细（前100条）</h2>
+<table>
+<tr><th>#</th><th>序列名</th><th>Reads</th><th>点突变</th><th>插入事件</th><th>删除事件</th><th>相似度</th></tr>
+{% for d in detail_rows %}
+<tr>
+  <td>{{ loop.index }}</td>
+  <td>{{ d.readName }}</td>
+  <td>{{ d.readCount }}</td>
+  <td>{{ d.mismatches }}</td>
+  <td>{{ d.gaps_in_ref }}</td>
+  <td>{{ d.gaps_in_query }}</td>
+  <td>{{ d.similarity }}</td>
+</tr>
+{% endfor %}
+{% if detail_truncated %}
+<tr><td colspan="7" style="text-align:center;color:#888;">... 还有 {{ detail_truncated }} 条突变序列未显示</td></tr>
+{% endif %}
+</table>
+
+<footer>Generated by CARLIN 序列分析工具 v{{ report.version }}</footer>
+</div>
+
+<div id="modalOverlay" class="modal-overlay">
+  <div class="modal-content" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeModal()">&times;</button>
+    <img id="modalImg" src="" />
+    <div class="modal-hint">滚轮缩放 · 拖拽平移 · 双击复原</div>
+  </div>
+</div>
+
+</body>
+</html>

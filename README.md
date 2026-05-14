@@ -1,5 +1,7 @@
 # Lineage Tracer — 谱系示踪序列分析工具
 
+[![CI](https://github.com/NousResearch/lineage-tracer/actions/workflows/ci.yml/badge.svg)](https://github.com/NousResearch/lineage-tracer/actions/workflows/ci.yml)
+
 基于仿射gap惩罚算法的序列比对命令行工具，支持**结构感知的谱系示踪比对模式**、多进程并行加速和FASTQ格式转换。专为多靶点基因编辑谱系示踪实验设计。
 
 ## 功能特性

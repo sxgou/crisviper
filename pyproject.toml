@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lineage-tracer"
+version = "0.1.0"
+description = "CARLIN sequence analysis CLI tool — affine gap alignment, mutation detection, and lineage tracing"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "NousResearch"},
+]
+
+dependencies = [
+    "numpy>=1.19.0",
+    "biopython>=1.79",
+    "matplotlib>=3.3.0",
+    "jinja2>=3.0",
+]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+]
+
+[project.urls]
+Repository = "https://github.com/NousResearch/lineage-tracer"
+
+[project.scripts]
+lineage-tracer = "carlin_tool:main"
+
+[tool.setuptools]
+packages = {find = {include = ["ltlib", "ltlib.*"]}}
+py-modules = ["carlin_tool", "affine_gap_alignment"]
+include-package-data = true
+package-data = {ltlib = ["*.typed"]}
+
+[tool.setuptools.data-files]
+templates = ["templates/report.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
