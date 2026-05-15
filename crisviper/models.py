@@ -203,10 +203,12 @@ class PipelineConfig:
 
     # ── 谱系示踪模式 ──
     lineage_mode: bool = False
-    cutsite_gap_scale: float = 1.0
-    flank_gap_scale: float = 2.0
-    far_gap_scale: float = 6.0
-    flank_width: int = 3
+    # 梯度惩罚: 以 cutsite 为中心平滑变化，替代离散区域倍率
+    gradient_mode: bool = True      # 标准模式下也启用位置感知（需要cutsite信息）
+    min_scale: float = 1.0          # 切割点处最低惩罚倍率
+    max_scale: float = 6.0          # 保守区最高惩罚倍率
+    cutsite_edge_scale: float = 2.0  # Cutsite 边界惩罚倍率
+    gradient_radius: Optional[float] = None  # 梯度半径: None=自动(多cutsite)/30bp(单)
     mismatch_density_threshold: float = 0.34
     mutation_window: int = 3
 
@@ -252,33 +254,6 @@ class PipelineConfig:
     # ── Allele过滤 ──
     min_reads_snv: int = 10      # 仅点突变所需最小readCount
     min_reads_indel: int = 3     # 有indel所需最小readCount
-
-    # ── 矫正管线（按执行顺序） ──
-    corrections: List[str] = field(default_factory=lambda: [
-        "convert_dense_mismatch_to_indel",
-        "correct_repetitive_misalignment",
-        "correct_target_misalignments",
-        "remove_isolated_matches",
-        "filter_point_mutations",
-    ])
-
-    # ── 重复序列矫正配置 ──
-    # "auto": 从reference动态检测重复序列
-    # "hardcoded": 使用硬编码的重复序列列表（向后兼容）
-    # "off": 跳过重复序列矫正
-    repeat_correction_mode: str = "auto"
-
-    # ── 小片段跨靶点矫正 ──
-    enable_target_misalignment_correction: bool = True
-
-    # ── 孤立匹配清除 ──
-    enable_isolated_match_removal: bool = True
-
-    # ── 密集错配矫正（后处理） ──
-    enable_dense_mismatch_correction: bool = True
-
-    # ── 点突变过滤（后处理） ──
-    enable_point_mutation_filtering: bool = True
 
     # ── 多线程 ──
     threads: int = 1

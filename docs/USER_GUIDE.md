@@ -56,7 +56,7 @@ crisviper align \
   --report html
 ```
 
-`--lineage` 开启结构感知的 gap 惩罚、自动检测 cutsite 位置、后处理矫正。HTML 报告包含突变类型分布、长度分布和摘要统计。
+`--lineage` 开启结构感知的梯度 gap 惩罚、自动检测 cutsite 位置。HTML 报告包含突变类型分布、长度分布和摘要统计。
 
 ### 3. 单细胞 RNA-seq 谱系数据
 
@@ -187,16 +187,6 @@ ACGTACGT...
 | `--homology-penalty` | 0.0 | -1.0 | 同源区域惩罚，0=关闭 |
 | `--isolated-base-penalty` | 0.0 | -2.0 | 孤立碱基匹配惩罚，0=关闭 |
 
-**矫正管线控制：**
-
-| Option | Effect / 效果 |
-|--------|--------|
-| `--repeat-correction-mode` | `auto`（默认）、`hardcoded` 或 `off` |
-| `--disable-target-misalignment` | 关闭 TAGTAT / 单碱基 A 的跨靶点矫正 |
-| `--disable-isolated-match-removal` | 保留切割 deletion 的孤立匹配 |
-| `--disable-dense-mismatch-correction` | 关闭后处理密集错配→indel 转换 |
-| `--disable-point-mutation-filtering` | 保留所有点突变，不按位置过滤 |
-
 **引物参数：**
 
 | Option | Default | Description / 说明 |
@@ -245,7 +235,6 @@ ACGTACGT...
     "similarity": 0.982,
     "identity": 1.0,
     "has_mutation": true,
-    "n_mutations_corrected": 1,
     "dense_regions_converted": false
   }
 }

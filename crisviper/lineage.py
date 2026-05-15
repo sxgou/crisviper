@@ -2,44 +2,87 @@
 
 import numpy as np
 import re
-from typing import Tuple, Dict, List
+from typing import Tuple, Dict, List, Optional
 from crisviper.config import CutsiteRegion, AmpliconConfig
 from crisviper.alignment import affine_gap_alignment_position_aware, calculate_alignment_stats
-from crisviper.corrections import filter_point_mutations
 from crisviper.logging_config import get_logger
 
 log = get_logger(__name__)
 
 
-def build_gap_penalty_profile(
+def _smoothstep(t: np.ndarray) -> np.ndarray:
+    """Smoothstep easing: 3t² - 2t³, derivative is 0 at both t=0 and t=1."""
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _calc_gradient_radius(cutsites: List[CutsiteRegion]) -> float:
+    """Auto-calculate gradient radius from adjacent cutsite spacing.
+
+    Returns half the distance between adjacent cutsite centers minus the
+    cutsite half-width, so that the gradient reaches max_scale exactly at
+    the midpoint between neighboring cutsites.
+    """
+    if len(cutsites) < 2:
+        return 30.0
+    centers = [(cs.start + cs.end) / 2.0 for cs in cutsites]
+    min_gap = min(centers[i + 1] - centers[i] for i in range(len(centers) - 1))
+    half_cs = (cutsites[0].end - cutsites[0].start + 1) / 2.0
+    radius = min_gap / 2.0 - half_cs
+    return max(radius, 1.0)
+
+
+def build_gradient_profiles(
     ref_length: int,
     cutsites: List[CutsiteRegion],
     base_gap_open: float = -2.0,
     base_gap_extend: float = -0.1,
-    cutsite_scale: float = 1.0,
-    flank_scale: float = 2.0,
-    far_scale: float = 2.0,
-    flank_width: int = 3
-) -> Tuple[np.ndarray, np.ndarray]:
-    gap_open_profile = np.full(ref_length, base_gap_open * far_scale)
-    gap_extend_profile = np.full(ref_length, base_gap_extend * far_scale)
-    effective_scale = np.full(ref_length, far_scale)
+    mismatch_penalty: float = -3.0,
+    min_scale: float = 1.0,
+    max_scale: float = 6.0,
+    cutsite_edge_scale: float = 2.0,
+    gradient_radius: Optional[float] = None,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Build position-dependent gap and mismatch penalty profiles using smoothstep gradient.
+
+    For each cutsite, the penalty scale follows:
+      - Internal micro-gradient: min_scale at cut center → cutsite_edge_scale at edge
+      - External gradient: cutsite_edge_scale at edge → max_scale at gradient_radius away
+
+    Multiple cutsites are combined by min() — the nearest cutsite dominates.
+
+    Returns: (gap_open_profile, gap_extend_profile, mismatch_profile)
+      All three are 1-D arrays of length ref_length.
+    """
+    if gradient_radius is None:
+        gradient_radius = _calc_gradient_radius(cutsites)
+
+    effective_scale = np.full(ref_length, max_scale, dtype=float)
+
     for cs in cutsites:
-        cs_start = max(0, cs.start)
-        cs_end = min(ref_length - 1, cs.end)
-        for pos in range(cs_start, cs_end + 1):
-            effective_scale[pos] = min(effective_scale[pos], cutsite_scale)
-        for offset in range(1, flank_width + 1):
-            left_pos = cs_start - offset
-            if left_pos >= 0:
-                effective_scale[left_pos] = min(effective_scale[left_pos], flank_scale)
-            right_pos = cs_end + offset
-            if right_pos < ref_length:
-                effective_scale[right_pos] = min(effective_scale[right_pos], flank_scale)
-    for pos in range(ref_length):
-        gap_open_profile[pos] = base_gap_open * effective_scale[pos]
-        gap_extend_profile[pos] = base_gap_extend * effective_scale[pos]
-    return gap_open_profile, gap_extend_profile
+        center = (cs.start + cs.end) / 2.0
+        cs_half = (cs.end - cs.start + 1) / 2.0
+
+        positions = np.arange(ref_length, dtype=float)
+        d = np.abs(positions - center)
+
+        # Internal micro-gradient (within cutsite)
+        internal = d <= cs_half
+        if internal.any():
+            t = d[internal] / cs_half
+            scale = min_scale + (cutsite_edge_scale - min_scale) * _smoothstep(t)
+            effective_scale[internal] = np.minimum(effective_scale[internal], scale)
+
+        # External gradient (from cutsite edge to gradient_radius)
+        outer = (d > cs_half) & (d <= cs_half + gradient_radius)
+        if outer.any():
+            t = (d[outer] - cs_half) / gradient_radius
+            scale = cutsite_edge_scale + (max_scale - cutsite_edge_scale) * _smoothstep(t)
+            effective_scale[outer] = np.minimum(effective_scale[outer], scale)
+
+    gap_open_profile = base_gap_open * effective_scale
+    gap_extend_profile = base_gap_extend * effective_scale
+    mismatch_profile = mismatch_penalty * effective_scale
+    return gap_open_profile, gap_extend_profile, mismatch_profile
 
 
 def build_homology_penalty_profile(
@@ -94,16 +137,13 @@ def lineage_tracer_align(
     mismatch_penalty: float = -3.0,
     base_gap_open: float = -2.0,
     base_gap_extend: float = -0.1,
-    cutsite_gap_scale: float = 1.0,
-    flank_gap_scale: float = 2.0,
-    far_gap_scale: float = 6.0,
-    flank_width: int = 3,
+    min_scale: float = 1.0,
+    max_scale: float = 6.0,
+    cutsite_edge_scale: float = 2.0,
+    gradient_radius: Optional[float] = None,
     mismatch_density_threshold: float = 0.34,
     mutation_window: int = 3,
     no_gap_prefix: int = 0,
-    cutsite_mismatch_scale: float = 1.0,
-    flank_mismatch_scale: float = 2.0,
-    far_mismatch_scale: float = 3.0,
     gap_exit_bonus: float = 0.0,
     short_match_window: int = 0,
     short_match_discount: float = 1.0,
@@ -113,25 +153,13 @@ def lineage_tracer_align(
     homology_penalty: float = 0.0,
     isolated_base_penalty: float = 0.0,
 ) -> Tuple[float, str, str, Dict]:
-    gap_open_profile, gap_extend_profile = build_gap_penalty_profile(
+    gap_open_profile, gap_extend_profile, mismatch_profile = build_gradient_profiles(
         ref_length=len(ref_seq), cutsites=cutsites,
         base_gap_open=base_gap_open, base_gap_extend=base_gap_extend,
-        cutsite_scale=cutsite_gap_scale, flank_scale=flank_gap_scale,
-        far_scale=far_gap_scale, flank_width=flank_width)
-    # Position-aware mismatch penalty: cheaper at cutsites, expensive elsewhere
-    mismatch_profile = np.full(len(ref_seq), mismatch_penalty * far_mismatch_scale)
-    for cs in cutsites:
-        cs_start = max(0, cs.start)
-        cs_end = min(len(ref_seq) - 1, cs.end)
-        for pos in range(cs_start, cs_end + 1):
-            mismatch_profile[pos] = max(mismatch_profile[pos], mismatch_penalty * cutsite_mismatch_scale)
-        for offset in range(1, flank_width + 1):
-            left_pos = cs_start - offset
-            if left_pos >= 0:
-                mismatch_profile[left_pos] = max(mismatch_profile[left_pos], mismatch_penalty * flank_mismatch_scale)
-            right_pos = cs_end + offset
-            if right_pos < len(ref_seq):
-                mismatch_profile[right_pos] = max(mismatch_profile[right_pos], mismatch_penalty * flank_mismatch_scale)
+        mismatch_penalty=mismatch_penalty,
+        min_scale=min_scale, max_scale=max_scale,
+        cutsite_edge_scale=cutsite_edge_scale,
+        gradient_radius=gradient_radius)
     if no_gap_prefix > 0:
         gap_open_profile[:no_gap_prefix] = -1e6
         gap_extend_profile[:no_gap_prefix] = -1e6
@@ -149,19 +177,13 @@ def lineage_tracer_align(
         dense_mismatch_penalty=dense_mismatch_penalty,
         homology_profile=homology_profile,
         isolated_base_penalty=isolated_base_penalty)
-    filtered_ref, filtered_query, n_corrected = filter_point_mutations(
-        aligned_ref, aligned_query,
-        cutsites, window=mutation_window)
-    final_ref, final_query = filtered_ref, filtered_query
+    final_ref, final_query = aligned_ref, aligned_query
     final_stats = calculate_alignment_stats(final_ref, final_query)
     corrected_score = (final_stats['matches'] * 2 +
                        final_stats['mismatches'] * (-3) +
                        final_stats['gaps_in_ref'] * (-2) +
                        final_stats['gaps_in_query'] * (-2))
     final_stats['score'] = corrected_score
-    final_stats['n_mutations_corrected'] = n_corrected
-    final_stats['dense_regions_converted'] = 0
-    final_stats['isolated_bases_consolidated'] = False
     return corrected_score, final_ref, final_query, final_stats
 
 

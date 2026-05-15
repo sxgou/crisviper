@@ -93,26 +93,18 @@ def main():
     # 谱系示踪模式
     align_parser.add_argument("--lineage", action="store_true",
                               help="启用谱系示踪比对模式")
-    align_parser.add_argument("--cutsite-scale", type=float, default=1.0)
-    align_parser.add_argument("--flank-scale", type=float, default=2.0)
-    align_parser.add_argument("--far-scale", type=float, default=6.0)
-    align_parser.add_argument("--flank-width", type=int, default=3)
+    align_parser.add_argument("--min-scale", type=float, default=1.0,
+                              help="切割点处最低惩罚倍率（默认：1.0）")
+    align_parser.add_argument("--max-scale", type=float, default=6.0,
+                              help="保守区最高惩罚倍率（默认：6.0）")
+    align_parser.add_argument("--cutsite-edge-scale", type=float, default=2.0,
+                              help="Cutsite边界惩罚倍率（默认：2.0）")
+    align_parser.add_argument("--gradient-radius", type=float, default=None,
+                              help="梯度有效半径 (bp)，省略则自动计算")
     align_parser.add_argument("--mutation-window", type=int, default=3)
     align_parser.add_argument("--density-threshold", type=float, default=0.34)
     align_parser.add_argument("--cutsites", default=None,
                               help="cutsite位置配置文件（JSON格式）")
-    # 矫正管线控制
-    align_parser.add_argument("--repeat-correction-mode", choices=["auto", "hardcoded", "off"],
-                              default="auto",
-                              help="重复序列矫正模式: auto=动态检测, hardcoded=硬编码列表, off=关闭")
-    align_parser.add_argument("--disable-target-misalignment", action="store_true",
-                              help="关闭小片段跨靶点矫正")
-    align_parser.add_argument("--disable-isolated-match-removal", action="store_true",
-                              help="关闭孤立匹配清除")
-    align_parser.add_argument("--disable-dense-mismatch-correction", action="store_true",
-                              help="关闭后处理密集错配矫正")
-    align_parser.add_argument("--disable-point-mutation-filtering", action="store_true",
-                              help="关闭点突变过滤")
 
     align_parser.add_argument("--gap-exit-bonus", type=float, default=0.0,
                               help="退出gap进入match的额外惩罚（≤0，负值使DP倾向合并gap，推荐-1.0）")
@@ -202,10 +194,10 @@ def main():
             gap_open=args.gap_open,
             gap_extend=args.gap_extend,
             lineage_mode=args.lineage,
-            cutsite_gap_scale=args.cutsite_scale,
-            flank_gap_scale=args.flank_scale,
-            far_gap_scale=args.far_scale,
-            flank_width=args.flank_width,
+            min_scale=args.min_scale,
+            max_scale=args.max_scale,
+            cutsite_edge_scale=args.cutsite_edge_scale,
+            gradient_radius=args.gradient_radius,
             mismatch_density_threshold=args.density_threshold,
             mutation_window=args.mutation_window,
             primer5_len=args.primer5_len,
@@ -220,12 +212,6 @@ def main():
             homology_window=args.homology_window,
             homology_penalty=args.homology_penalty,
             isolated_base_penalty=args.isolated_base_penalty,
-            # 矫正管线控制
-            repeat_correction_mode=args.repeat_correction_mode,
-            enable_target_misalignment_correction=not args.disable_target_misalignment,
-            enable_isolated_match_removal=not args.disable_isolated_match_removal,
-            enable_dense_mismatch_correction=not args.disable_dense_mismatch_correction,
-            enable_point_mutation_filtering=not args.disable_point_mutation_filtering,
             # 智能过滤（min-reads=1时启用智能过滤，>1时用阈值过滤）
             min_reads_snv=args.min_reads if args.min_reads > 1 else 10,
             min_reads_indel=args.min_reads if args.min_reads > 1 else 3,
@@ -239,9 +225,10 @@ def main():
 
         # 显示配置信息
         align_type = "全局" if args.use_global else "半全局"
+        radius_info = "auto" if args.gradient_radius is None else f"{args.gradient_radius}bp"
+        log.info("  梯度惩罚参数: min_scale=%s, max_scale=%s, edge_scale=%s, radius=%s",
+                 args.min_scale, args.max_scale, args.cutsite_edge_scale, radius_info)
         if args.lineage:
-            log.info("  谱系示踪参数: cutsite倍率=%s, 侧翼倍率=%s, 远端倍率=%s",
-                     args.cutsite_scale, args.flank_scale, args.far_scale)
             log.info("  突变窗口: cutsite±%s bp, mismatch密度阈值: %s",
                      args.mutation_window, args.density_threshold)
 

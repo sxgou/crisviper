@@ -18,7 +18,7 @@ from crisviper import (
     get_amplicon_structure, CutsiteRegion,
     affine_gap_alignment,
     affine_gap_alignment_position_aware,
-    build_gap_penalty_profile,
+    build_gradient_profiles,
     lineage_tracer_align,
     extract_mutations,
     MutationEvent, MutationType,
@@ -399,30 +399,28 @@ class TestEditingEfficiency:
 class TestPositionAwareGapPenalty:
     """验证 gap 是否优先在 cutsite 区域开启而非保守区域"""
 
-    def test_build_gap_penalty_profile_correctness(self):
-        """gap惩罚配置文件的数值正确性"""
+    def test_build_gradient_profiles_correctness(self):
+        """梯度惩罚配置文件的数值正确性"""
         ref_len = 20
         cutsites = [CutsiteRegion("T1", 5, 10)]
-        go, ge = build_gap_penalty_profile(
+        go, ge, mp = build_gradient_profiles(
             ref_len, cutsites,
             base_gap_open=-2.0, base_gap_extend=-0.1,
-            cutsite_scale=1.0, flank_scale=2.0, far_scale=2.0, flank_width=3,
+            mismatch_penalty=-3.0,
+            min_scale=1.0, max_scale=2.0, cutsite_edge_scale=2.0,
         )
 
-        # cutsite 区域 (5-10): scale=1.0 → open=-2.0, extend=-0.1
-        for i in range(5, 11):
-            assert go[i] == pytest.approx(-2.0), f"cutsite go[{i}]"
-            assert ge[i] == pytest.approx(-0.1), f"cutsite ge[{i}]"
-
-        # far 区域 (0-1, 14-19): scale=2.0 → open=-4.0, extend=-0.2
+        # far 区域 (0-1, 14-19): max_scale=2.0 → open=-4.0, extend=-0.2
         for i in [0, 1, 15, 16, 17, 18, 19]:
             assert go[i] == pytest.approx(-4.0), f"far go[{i}]"
             assert ge[i] == pytest.approx(-0.2), f"far ge[{i}]"
 
-        # flank 区域 (2-4, 11-13): scale=2.0 → open=-4.0
-        for i in [2, 3, 4, 11, 12, 13]:
-            assert go[i] == pytest.approx(-4.0), f"flank go[{i}]"
-            assert ge[i] == pytest.approx(-0.2), f"flank ge[{i}]"
+        # cutsite 中心 (7-8): 接近 min_scale=1.0 → open ≈ -2.0
+        assert go[7] > -2.5, f"center go[7]={go[7]} should be near -2.0"
+        assert go[8] > -2.5, f"center go[8]={go[8]} should be near -2.0"
+        # cutsite 边缘 (5, 10): 接近 edge_scale=2.0 → open ≈ -4.0
+        assert go[5] < -3.0, f"edge go[5]={go[5]} should be near -4.0"
+        assert go[10] < -3.0, f"edge go[10]={go[10]} should be near -4.0"
 
     def test_position_aware_alignment_gap_in_cutsite(self):
         """位置感知比对将gap放置在cutsite区域（低成本区域）"""
@@ -433,13 +431,15 @@ class TestPositionAwareGapPenalty:
         cutsites = [CutsiteRegion("T1", 4, 7)]
 
         # 位置感知比对（cutsite gap 惩罚低）
-        go, ge = build_gap_penalty_profile(
+        go, ge, mp = build_gradient_profiles(
             len(ref), cutsites,
             base_gap_open=-2.0, base_gap_extend=-0.1,
-            cutsite_scale=1.0, far_scale=2.0, flank_scale=3.0,
+            mismatch_penalty=-3.0,
+            min_scale=1.0, max_scale=2.0, cutsite_edge_scale=2.0,
         )
         _, ar, aq, stats = affine_gap_alignment_position_aware(
             ref, query, go, ge,
+            mismatch_penalty_profile=mp,
         )
 
         # 应有gap (6bp 删除)
@@ -470,13 +470,15 @@ class TestPositionAwareGapPenalty:
         )
 
         # 位置感知比对（cutsite gap 惩罚低，两侧惩罚较高）
-        go, ge = build_gap_penalty_profile(
+        go, ge, mp = build_gradient_profiles(
             len(ref), cutsites,
             base_gap_open=-2.0, base_gap_extend=-0.1,
-            cutsite_scale=1.0, far_scale=5.0, flank_scale=5.0,
+            mismatch_penalty=-3.0,
+            min_scale=1.0, max_scale=5.0, cutsite_edge_scale=5.0,
         )
         _, ar_pa, aq_pa, stats_pa = affine_gap_alignment_position_aware(
             ref, query, go, ge,
+            mismatch_penalty_profile=mp,
         )
 
         # 位置感知比对应有gap
@@ -499,8 +501,8 @@ class TestPositionAwareGapPenalty:
 
         score, ar, aq, stats = lineage_tracer_align(
             ref, query, cutsites,
-            cutsite_gap_scale=1.0,
-            far_gap_scale=2.0,
+            min_scale=1.0,
+            max_scale=2.0,
         )
 
         # 应检测到 6bp 删除
@@ -669,13 +671,15 @@ def run_accuracy_checks(check_func):
     ref = "AAATTTCCCGGG"
     query = "AAAGGG"
     cutsites = [CutsiteRegion("T1", 4, 7)]
-    go, ge = build_gap_penalty_profile(
+    go, ge, mp = build_gradient_profiles(
         len(ref), cutsites,
         base_gap_open=-2.0, base_gap_extend=-0.1,
-        cutsite_scale=1.0, far_scale=2.0, flank_scale=3.0,
+        mismatch_penalty=-3.0,
+        min_scale=1.0, max_scale=2.0, cutsite_edge_scale=2.0,
     )
     _, ar, aq, stats = affine_gap_alignment_position_aware(
         ref, query, go, ge,
+        mismatch_penalty_profile=mp,
     )
     gap_indices = {i for i, c in enumerate(aq) if c == '-'}
     cutsite_range = set(range(4, 8))

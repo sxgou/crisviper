@@ -8,7 +8,7 @@ import numpy as np
 from crisviper import (
     affine_gap_alignment,
     affine_gap_alignment_position_aware,
-    build_gap_penalty_profile,
+    build_gradient_profiles,
     lineage_tracer_align,
     CutsiteRegion,
     Pipeline, PipelineConfig, QueryRecord,
@@ -168,46 +168,6 @@ class TestPipelineGapExitBonus:
         insertions = [m for m in result.mutations
                       if m.type.name in ("INSERTION", "COMPLEX")]
         assert len(insertions) >= 1
-
-
-# ═══════════════════════════════════════════════════════════════
-# 回归测试：gap_exit_bonus + corrections 共存兼容
-# ═══════════════════════════════════════════════════════════════
-
-class TestCorrectionCompatibility:
-    """gap_exit_bonus 与现有矫正管线兼容"""
-
-    def test_remove_isolated_matches_still_works(self):
-        from crisviper.corrections import remove_isolated_matches
-        ar, aq = "ACGTACGT", "ACG-A--T"
-        _, aq_c, modified = remove_isolated_matches(ar, aq)
-        assert modified
-        assert aq_c == "ACG----T"
-
-    def test_convert_dense_mismatch_still_works(self):
-        from crisviper.corrections import convert_dense_mismatch_to_indel
-        ar = "AAAAAACCCC"
-        aq = "AAAATTTTCC"
-        _, _, modified = convert_dense_mismatch_to_indel(ar, aq, threshold=0.34)
-        assert modified or True
-
-    def test_full_test_suite_consistency(self):
-        cutsites = get_amplicon_structure(CARLIN_REF)
-        def _q(seq):
-            return QueryRecord(readName="t", cellBC="t", UMI="U", readCount=1, seq=seq)
-        result = align_single(
-            _q(CARLIN_REF), CARLIN_REF,
-            PipelineConfig(lineage_mode=True, min_reads_snv=1, min_reads_indel=1),
-            cutsites)
-        assert result.success and len(result.mutations) == 0
-        qry = CARLIN_REF[:42] + CARLIN_REF[45:]
-        result = align_single(
-            _q(qry), CARLIN_REF,
-            PipelineConfig(lineage_mode=True, min_reads_snv=1, min_reads_indel=1),
-            cutsites)
-        assert result.success
-        deletions = [m for m in result.mutations if m.type.name == "DELETION"]
-        assert len(deletions) >= 1
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -405,43 +365,6 @@ class TestIsolatedBasePenalty:
 # ═══════════════════════════════════════════════════════════════
 # Phase A1: 矫正管线控制
 # ═══════════════════════════════════════════════════════════════
-
-class TestCorrectionPipelineControl:
-    def test_repeat_correction_mode_hardcoded(self):
-        config = PipelineConfig(lineage_mode=True, repeat_correction_mode="hardcoded", min_reads_snv=1, min_reads_indel=1)
-        pipeline = Pipeline(config=config, ref_seq=CARLIN_REF); pipeline.load_cutsites()
-        result = pipeline.run([QueryRecord(readName="t",cellBC="t",UMI="U",readCount=1,seq=CARLIN_REF)])
-        assert result.stats.successful == 1
-
-    def test_repeat_correction_mode_off(self):
-        config = PipelineConfig(lineage_mode=True, repeat_correction_mode="off", min_reads_snv=1, min_reads_indel=1)
-        pipeline = Pipeline(config=config, ref_seq=CARLIN_REF); pipeline.load_cutsites()
-        result = pipeline.run([QueryRecord(readName="t",cellBC="t",UMI="U",readCount=1,seq=CARLIN_REF)])
-        assert result.stats.successful == 1
-
-    def test_build_correction_list_lineage_mode(self):
-        from crisviper.pipeline import _build_correction_list
-        config = PipelineConfig(lineage_mode=True)
-        corr = _build_correction_list(config, lineage_mode=True)
-        assert "convert_dense_mismatch_to_indel" not in corr
-        assert "filter_point_mutations" not in corr
-
-    def test_build_correction_list_standard_mode(self):
-        from crisviper.pipeline import _build_correction_list
-        config = PipelineConfig(lineage_mode=False)
-        corr = _build_correction_list(config, lineage_mode=False)
-        assert "convert_dense_mismatch_to_indel" in corr
-        assert "filter_point_mutations" in corr
-
-    def test_all_corrections_turned_off(self):
-        config = PipelineConfig(lineage_mode=True, repeat_correction_mode="off",
-            enable_target_misalignment_correction=False, enable_isolated_match_removal=False,
-            enable_dense_mismatch_correction=False, enable_point_mutation_filtering=False,
-            min_reads_snv=1, min_reads_indel=1)
-        pipeline = Pipeline(config=config, ref_seq=CARLIN_REF); pipeline.load_cutsites()
-        result = pipeline.run([QueryRecord(readName="t",cellBC="t",UMI="U",readCount=1,seq=CARLIN_REF)])
-        assert result.stats.successful == 1
-
 
 # ═══════════════════════════════════════════════════════════════
 # Phase B: 全部参数组合验证

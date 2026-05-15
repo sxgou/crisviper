@@ -4,10 +4,9 @@
   1. 数据转换（DataLoader）
   2. 序列比对（Aligner）
   3. 突变识别（MutationDetector）
-  4. 序列矫正（CorrectionPipeline）
-  5. Allele过滤（AlleleFilter）
-  6. 数据统计（StatsCollector）
-  7. 输出结果（ResultSaver）
+  4. Allele过滤（AlleleFilter）
+  5. 数据统计（StatsCollector）
+  6. 输出结果（ResultSaver）
 
 每个步骤可独立测试、替换、跳过。
 """
@@ -33,13 +32,6 @@ from crisviper.models import (
 )
 from crisviper.config import CutsiteRegion, AmpliconConfig
 from crisviper.mutation import extract_mutations, build_mutation_summary, annotate_mutations, _build_ref_pos_map_full
-from crisviper.corrections import (
-    convert_dense_mismatch_to_indel,
-    filter_point_mutations,
-    correct_repetitive_misalignment,
-    correct_target_misalignments,
-    remove_isolated_matches,
-)
 from crisviper.alignment import (
     affine_gap_alignment,
     affine_gap_alignment_position_aware,
@@ -47,7 +39,8 @@ from crisviper.alignment import (
 )
 from crisviper.lineage import (
     lineage_tracer_align,
-    build_gap_penalty_profile,
+    build_gradient_profiles,
+    build_homology_penalty_profile,
     get_amplicon_structure,
 )
 from crisviper.denoiser import directional_adjacency_top_down_denoiser
@@ -160,63 +153,6 @@ def _extract_internal_region(
     return ar_int, aq_int, int_r
 
 
-def apply_corrections_pipeline(
-    aligned_ref: str,
-    aligned_query: str,
-    ref_seq: str,
-    query_seq: str,
-    correction_list: List[str],
-    cutsites: Optional[List[CutsiteRegion]] = None,
-    mismatch_density_threshold: float = 0.34,
-    mutation_window: int = 3,
-    config: Optional[AmpliconConfig] = None,
-    repeat_correction_mode: str = "auto",
-) -> Tuple[str, str]:
-    """应用矫正函数管线
-
-    correction_list 中的函数名按顺序执行。
-    每个函数对齐后的输出作为下一个的输入。
-
-    参数:
-        config: 可选的 AmpliconConfig。提供时启用动态坐标检测。
-
-    返回: (矫正后的 aligned_ref, aligned_query)
-    """
-    ar, aq = aligned_ref, aligned_query
-
-    for fn_name in correction_list:
-        try:
-            if fn_name == "convert_dense_mismatch_to_indel":
-                ar, aq, _ = convert_dense_mismatch_to_indel(
-                    ar, aq,
-                    threshold=mismatch_density_threshold,
-                )
-            elif fn_name == "correct_repetitive_misalignment":
-                # "hardcoded" mode: don't pass ref_seq → uses _HARDCODED_REPEATS_CONFIG
-                rep_ref = ref_seq if repeat_correction_mode == "auto" else None
-                ar, aq, _ = correct_repetitive_misalignment(ar, aq, rep_ref)
-            elif fn_name == "correct_target_misalignments":
-                if config is not None:
-                    cs_start = len(config.prefix) + 1 * config.period + config.cutsite_offset - 1
-                    cs_end = len(config.prefix) + (config.n_targets - 1) * config.period + config.cutsite_offset - 1
-                else:
-                    cs_start = cs_end = None
-                ar, aq, _ = correct_target_misalignments(ar, aq, ref_seq, cs_start, cs_end)
-            elif fn_name == "remove_isolated_matches":
-                ar, aq, _ = remove_isolated_matches(ar, aq)
-            elif fn_name == "filter_point_mutations":
-                if cutsites:
-                    ar, aq, _ = filter_point_mutations(
-                        ar, aq, cutsites, window=mutation_window,
-                    )
-            else:
-                log.warning("未知的矫正函数: %s，跳过", fn_name)
-        except Exception as e:
-            log.warning("矫正函数 %s 执行失败: %s，继续尝试后续矫正", fn_name, e)
-
-    return ar, aq
-
-
 # ═══════════════════════════════════════════════════════════════
 # 步骤2: Allele置信度过滤
 # ═══════════════════════════════════════════════════════════════
@@ -251,36 +187,6 @@ def check_allele_confidence(
 # 步骤3: 单序列比对（完整的 align_single 逻辑）
 # ═══════════════════════════════════════════════════════════════
 
-def _build_correction_list(config: PipelineConfig, lineage_mode: bool = False) -> List[str]:
-    """根据配置动态构建矫正函数列表"""
-    # 从 toggle 标记决定哪些矫正启用
-    enabled = {}
-    # 密集错配矫正
-    enabled["convert_dense_mismatch_to_indel"] = config.enable_dense_mismatch_correction
-    # 重复序列矫正
-    if config.repeat_correction_mode == "off":
-        enabled["correct_repetitive_misalignment"] = False
-    else:
-        enabled["correct_repetitive_misalignment"] = True
-    # 小片段跨靶点矫正
-    enabled["correct_target_misalignments"] = config.enable_target_misalignment_correction
-    # 孤立匹配清除
-    enabled["remove_isolated_matches"] = config.enable_isolated_match_removal
-    # 点突变过滤
-    enabled["filter_point_mutations"] = config.enable_point_mutation_filtering
-
-    result = []
-    for fn_name in config.corrections:
-        if enabled.get(fn_name, True):
-            result.append(fn_name)
-
-    # 谱系模式：跳过 end-to-end 密集错配矫正和点突变过滤
-    # （这些在 lineage_tracer_align 内部已处理）
-    if lineage_mode:
-        result = [c for c in result
-                  if c not in ("convert_dense_mismatch_to_indel", "filter_point_mutations")]
-    return result
-
 
 def align_single(
     query: QueryRecord,
@@ -294,7 +200,6 @@ def align_single(
       1. 全长全局比对（ref 332bp vs query）
       2. 引物区比对质量检查（取代双端锚定先验检查）
       3. 内部区域提取（trim 掉引物列）
-      4. 矫正管线
       5. 使用 WT 引物组装全长输出
       6. 内部区域重计分
       7. 突变识别
@@ -313,7 +218,7 @@ def align_single(
         )
     else:
         score, ar, aq, raw_stats = _align_full_standard(
-            r_seq, q_seq, config,
+            r_seq, q_seq, config, cutsites=cutsites,
         )
 
     if not ar:
@@ -338,20 +243,7 @@ def align_single(
     if ar_int is None:
         return AlignmentResult.error_result(query, "无法从全长比对中提取内部区域")
 
-    # ── 步骤4: 矫正管线 ──
-    corrections_to_apply = _build_correction_list(config, lineage_mode=(config.lineage_mode and cutsites is not None))
-    ar_int_corrected, aq_int_corrected = apply_corrections_pipeline(
-        ar_int, aq_int, int_r, int_r,
-        correction_list=corrections_to_apply,
-        cutsites=cutsites,
-        mismatch_density_threshold=config.mismatch_density_threshold,
-        mutation_window=config.mutation_window,
-        repeat_correction_mode=config.repeat_correction_mode,
-    )
-    if ar_int_corrected != ar_int or aq_int_corrected != aq_int:
-        ar_int, aq_int = ar_int_corrected, aq_int_corrected
-
-    # ── 步骤5: WT 引物组装 ──
+    # ── 步骤4: WT 引物组装 ──
     aligned_ref, aligned_query = _assemble_full_length(
         ar_int, aq_int, r_seq, p5, p3,
     )
@@ -416,10 +308,10 @@ def _align_full_lineage(
         mismatch_penalty=config.mismatch_penalty,
         base_gap_open=config.gap_open,
         base_gap_extend=config.gap_extend,
-        cutsite_gap_scale=config.cutsite_gap_scale,
-        flank_gap_scale=config.flank_gap_scale,
-        far_gap_scale=config.far_gap_scale,
-        flank_width=config.flank_width,
+        min_scale=config.min_scale,
+        max_scale=config.max_scale,
+        cutsite_edge_scale=config.cutsite_edge_scale,
+        gradient_radius=config.gradient_radius,
         mismatch_density_threshold=config.mismatch_density_threshold,
         mutation_window=config.mutation_window,
         gap_exit_bonus=config.gap_exit_bonus,
@@ -442,24 +334,57 @@ def _align_full_standard(
     r_seq: str,
     q_seq: str,
     config: PipelineConfig,
+    cutsites: Optional[List[CutsiteRegion]] = None,
 ) -> Tuple[float, str, str, Dict]:
-    """全长标准 Gotoh 比对 ref vs query"""
+    """全长标准 Gotoh 比对 ref vs query
+
+    当 cutsites 可用且 config.gradient_mode 启用时，使用平滑梯度
+    位置感知的 gap/mismatch 惩罚；否则使用全局固定惩罚。
+    """
     if not q_seq:
         return 0.0, "", "", {"matches": 0, "mismatches": 0, "gaps_in_ref": 0,
                              "gaps_in_query": 0, "gap_blocks_ref": [],
                              "gap_blocks_query": [], "alignment_length": 0,
                              "similarity": 0.0, "identity": 0.0, "score": 0.0}
 
-    score, ar, aq, raw_stats = affine_gap_alignment(
-        r_seq, q_seq,
-        match_score=config.match_score,
-        mismatch_penalty=config.mismatch_penalty,
-        gap_open=config.gap_open,
-        gap_extend=config.gap_extend,
-        gap_exit_bonus=config.gap_exit_bonus,
-        short_match_window=config.short_match_window,
-        short_match_discount=config.short_match_discount,
-    )
+    if cutsites and config.gradient_mode:
+        gap_open_p, gap_extend_p, mismatch_p = build_gradient_profiles(
+            ref_length=len(r_seq), cutsites=cutsites,
+            base_gap_open=config.gap_open, base_gap_extend=config.gap_extend,
+            mismatch_penalty=config.mismatch_penalty,
+            min_scale=config.min_scale, max_scale=config.max_scale,
+            cutsite_edge_scale=config.cutsite_edge_scale,
+            gradient_radius=config.gradient_radius,
+        )
+        homology_p = build_homology_penalty_profile(
+            r_seq, homology_window=config.homology_window,
+            homology_penalty=config.homology_penalty,
+        )
+        score, ar, aq, raw_stats = affine_gap_alignment_position_aware(
+            r_seq, q_seq, gap_open_p, gap_extend_p,
+            match_score=config.match_score,
+            mismatch_penalty=config.mismatch_penalty,
+            mismatch_penalty_profile=mismatch_p,
+            gap_exit_bonus=config.gap_exit_bonus,
+            short_match_window=config.short_match_window,
+            short_match_discount=config.short_match_discount,
+            dense_mismatch_window=config.dense_mismatch_window,
+            dense_mismatch_threshold=config.mismatch_density_threshold,
+            dense_mismatch_penalty=config.dense_mismatch_penalty,
+            homology_profile=homology_p,
+            isolated_base_penalty=config.isolated_base_penalty,
+        )
+    else:
+        score, ar, aq, raw_stats = affine_gap_alignment(
+            r_seq, q_seq,
+            match_score=config.match_score,
+            mismatch_penalty=config.mismatch_penalty,
+            gap_open=config.gap_open,
+            gap_extend=config.gap_extend,
+            gap_exit_bonus=config.gap_exit_bonus,
+            short_match_window=config.short_match_window,
+            short_match_discount=config.short_match_discount,
+        )
     return score, ar, aq, raw_stats
 
 
@@ -658,7 +583,7 @@ class Pipeline:
       1. 全长全局比对         (affine_gap_alignment / lineage_tracer_align)
       2. 引物区比对质量检查     (_check_primer_quality)
       3. 内部区域提取          (_extract_internal_region)
-      4. 序列矫正             (apply_corrections_pipeline)
+
       5. WT 引物组装          (_assemble_full_length)
       6. 内部区域重计分         (calculate_alignment_stats)
       7. 突变识别             (extract_mutations)

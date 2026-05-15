@@ -112,12 +112,6 @@ def main():
              len(mutated_l), len(success_l),
              len(mutated_l) / len(success_l) * 100 if success_l else 0)
 
-    n_corrected = sum(
-        1 for r in result_lineage.results if r.success and r.stats
-        and getattr(r.stats, "n_mutations_corrected", 0) > 0
-    )
-    log.info("Corrected alignments: %d", n_corrected)
-
     # ── Step 5: Save results and report ──────────────────────
     output_json = os.path.join(OUTPUT_DIR, "alignments.json")
     output_html = os.path.join(OUTPUT_DIR, "report.html")

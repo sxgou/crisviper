@@ -7,7 +7,6 @@ crisviper — CrisViper 库
   - io:           数据转换（FASTQ→TSV/FASTA）
   - alignment:    核心比对算法
   - lineage:      谱系示踪比对模式
-  - corrections:  比对后矫正
   - mutation:     突变识别
   - pipeline:     管道编排
   - reporting:    输出和报告生成
@@ -27,15 +26,8 @@ from crisviper.alignment import (
     count_gap_blocks, affine_gap_alignment_position_aware,
 )
 from crisviper.lineage import (
-    lineage_tracer_align, build_gap_penalty_profile,
-    get_amplicon_structure,
-)
-from crisviper.corrections import (
-    convert_dense_mismatch_to_indel,
-    filter_point_mutations,
-    correct_repetitive_misalignment,
-    correct_target_misalignments,
-    remove_isolated_matches,
+    lineage_tracer_align, build_gradient_profiles,
+    build_homology_penalty_profile, get_amplicon_structure,
 )
 from crisviper.mutation import (
     extract_mutations, classify_mutation_type,
