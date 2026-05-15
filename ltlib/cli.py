@@ -1,6 +1,4 @@
-#!/usr/bin/env python3
-"""
-CARLIN序列分析命令行工具
+"""lineage-tracer CLI — 谱系示踪序列分析命令行工具
 
 基于仿射gap惩罚算法的序列比对工具，支持FASTQ转换和并行批量比对。
 
@@ -9,17 +7,9 @@ CARLIN序列分析命令行工具
   align     并行批量将TSV或FASTA格式中的序列与reference进行比对
 
 示例:
-  # 将FASTQ转换为TSV
-  carlin_tool.py convert fastq-to-tsv --fastq reads.fastq.gz --output reads.tsv
-
-  # 并行批量比对TSV文件（自动使用所有CPU核心）
-  carlin_tool.py align --reference ref.fasta --queries queries.tsv --output alignments.json
-
-  # 同时输出JSON和TSV，并生成分析报告
-  carlin_tool.py align --reference ref.fasta --queries queries.tsv --output results/prefix --format all --report html
-
-  # 指定8个并行进程
-  carlin_tool.py align --reference ref.fasta --queries queries.tsv --output alignments.json --threads 8
+  $ lineage-tracer convert fastq-to-tsv --fastq reads.fastq.gz --output reads.tsv
+  $ lineage-tracer align --reference ref.fasta --queries queries.tsv --output alignments.json
+  $ lineage-tracer align --reference ref.fasta --queries queries.tsv --output results/prefix --format all --report html
 """
 
 import argparse
@@ -34,29 +24,18 @@ import multiprocessing as mp
 from typing import List, Dict
 
 from ltlib import (
-    # 数据模型 — 类型安全
     PipelineConfig, PipelineResult, AlignmentResult, QueryRecord,
-
-    # I/O
     fastq_to_dataframe, fastq_to_fasta, save_tsv,
     read_reference_fasta, read_queries_tsv, read_queries_fasta,
-
-    # 管道编排
     Pipeline,
-
-    # 报告
     save_alignment_results, generate_report,
-
-    # 配置
     get_amplicon_structure, CutsiteRegion,
-
-    # 日志
     get_logger, setup_logging,
 )
 
 log = get_logger(__name__)
 
-__version__ = "3.0.0"
+__version__ = "1.0.0"
 
 
 def _queries_to_records(queries: List[Dict]) -> List[QueryRecord]:
@@ -67,13 +46,13 @@ def _queries_to_records(queries: List[Dict]) -> List[QueryRecord]:
 def main():
     setup_logging(quiet=False)
     parser = argparse.ArgumentParser(
-        description="CARLIN序列分析命令行工具",
+        description="lineage-tracer — 谱系示踪序列分析命令行工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
-    parser.add_argument('-v', '--verbose', action='store_true', help='Increase verbosity (show debug output)')
-    parser.add_argument('-q', '--quiet', action='store_true', help='Suppress info output, show only warnings/errors')
+    parser.add_argument('-v', '--verbose', action='store_true', help='显示调试信息')
+    parser.add_argument('-q', '--quiet', action='store_true', help='仅显示警告和错误')
 
     subparsers = parser.add_subparsers(dest="command", required=True, help="命令")
 
@@ -323,7 +302,6 @@ def _get_display_cutsites(ref_seq: str, lineage_mode: bool):
 
 
 if __name__ == "__main__":
-    # init process
     try:
         mp.set_start_method('fork')
     except RuntimeError:

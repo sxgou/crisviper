@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lineage-tracer"
-version = "0.1.0"
-description = "CARLIN sequence analysis CLI tool — affine gap alignment, mutation detection, and lineage tracing"
+version = "1.0.0"
+description = "谱系示踪序列分析命令行工具 — 仿射gap比对、突变检测、谱系示踪分析"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
-    {name = "NousResearch"},
+    {name = "gsx-ucas"},
 ]
 
 dependencies = [
@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
     "Programming Language :: Python :: 3",
@@ -31,19 +31,13 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/NousResearch/lineage-tracer"
+Repository = "https://github.com/sxgou/lineage-tracer"
 
 [project.scripts]
-lineage-tracer = "carlin_tool:main"
+lineage-tracer = "ltlib.cli:main"
 
 [tool.setuptools]
 packages = {find = {include = ["ltlib", "ltlib.*"]}}
-py-modules = ["carlin_tool", "affine_gap_alignment"]
-include-package-data = true
-package-data = {ltlib = ["*.typed"]}
-
-[tool.setuptools.data-files]
-templates = ["templates/report.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

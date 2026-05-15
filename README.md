@@ -46,7 +46,7 @@ pip install -r requirements.txt
 
 1. **将FASTQ转换为TSV格式**：
 ```bash
-python carlin_tool.py convert fastq-to-tsv \
+lineage-tracer convert fastq-to-tsv \
   --fastq reads.fastq.gz \
   --output reads.tsv \
   --sample-name my_sample
@@ -54,7 +54,7 @@ python carlin_tool.py convert fastq-to-tsv \
 
 2. **标准并行批量序列比对**（自动使用所有CPU核心）：
 ```bash
-python carlin_tool.py align \
+lineage-tracer align \
   --reference reference.fasta \
   --queries queries.tsv \
   --output alignments.json
@@ -62,7 +62,7 @@ python carlin_tool.py align \
 
 3. **谱系示踪比对模式**（结构感知，自动推断cutsite位置）：
 ```bash
-python carlin_tool.py align \
+lineage-tracer align \
   --reference reference.fasta \
   --queries queries.tsv \
   --output alignments.json \
@@ -71,7 +71,7 @@ python carlin_tool.py align \
 
 4. **谱系模式 + DP原生特征 + 报告**：
 ```bash
-python carlin_tool.py align \
+lineage-tracer align \
   --reference example_data/reference.fa \
   --queries example_data/test_queries.tsv \
   --output results/prefix \
@@ -87,7 +87,7 @@ python carlin_tool.py align \
 
 5. **指定并行进程数**：
 ```bash
-python carlin_tool.py align \
+lineage-tracer align \
   --reference reference.fasta \
   --queries queries.tsv \
   --output alignments.json \
@@ -98,8 +98,8 @@ python carlin_tool.py align \
 
 ```
 .
-├── carlin_tool.py             # 命令行工具主程序
 ├── ltlib/                     # 核心库（模块化包结构）
+│   ├── cli.py                 # 命令行工具主程序（lineage-tracer命令入口）
 │   ├── alignment.py           # DP比对算法（标准+位置感知+向量化）
 │   ├── lineage.py             # 谱系示踪：gap profile, cutsite检测
 │   ├── pipeline.py            # 管线编排（8步流程+ProcessPoolExecutor）
@@ -203,5 +203,5 @@ MIT License
 如有问题或建议，请：
 1. 确保已安装所有依赖 (`pip install -r requirements.txt`)
 2. 查看详细文档：`docs/ALGORITHM.md` 和 `docs/USER_GUIDE.md`
-3. 使用帮助命令：`python carlin_tool.py --help`
-4. 谱系示踪模式：`python carlin_tool.py align --help`
+3. 使用帮助命令：`lineage-tracer --help`
+4. 谱系示踪模式：`lineage-tracer align --help`
