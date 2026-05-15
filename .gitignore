@@ -47,5 +47,8 @@ results/*/*.html
 # Project description (not for GitHub)
 项目描述.md
 
+# Derived data (generated from FASTQ, can be recreated)
+example_data/test_queries.tsv
+
 # Test cache
 .pytest_cache/

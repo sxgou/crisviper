@@ -281,7 +281,7 @@ class PipelineConfig:
     enable_point_mutation_filtering: bool = True
 
     # ── 多线程 ──
-    threads: Optional[int] = None
+    threads: int = 1
     chunk_size: int = 500
 
     # ── 报告 ──

@@ -738,8 +738,12 @@ class Pipeline:
 
         # ── 并行比对 ──
         mode_label = "谱系示踪比对" if self.config.lineage_mode else "标准比对"
+
+        threads = self.config.threads or 1
+        threads = min(threads, total)
+
         log.info("  使用 %d 个并行进程处理 %d 条序列 (%s)...",
-                 self.config.threads or mp.cpu_count(), total, mode_label)
+                 threads, total, mode_label)
 
         # 批次划分
         chunk_size = self.config.chunk_size
@@ -747,8 +751,6 @@ class Pipeline:
         log.info("  共 %d 个批次 (每批最多 %d 条)...", len(chunks), chunk_size)
 
         # 并行执行
-        threads = self.config.threads or mp.cpu_count()
-        threads = min(threads, total, 12)  # 上限12线程防止系统过载
         results = []
 
         if threads > 1:

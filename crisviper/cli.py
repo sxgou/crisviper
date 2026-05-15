@@ -132,7 +132,7 @@ def main():
                               help="孤立碱基匹配额外惩罚（≤0，0=关闭，推荐-2.0），吸收孤立匹配到gap端点")
 
     # 并行参数
-    align_parser.add_argument("--threads", "-t", type=int, default=None)
+    align_parser.add_argument("--threads", "-t", type=int, default=1)
 
     # 引物参数
     align_parser.add_argument("--primer5-len", type=int, default=23)
@@ -245,11 +245,10 @@ def main():
             log.info("  突变窗口: cutsite±%s bp, mismatch密度阈值: %s",
                      args.mutation_window, args.density_threshold)
 
-        if args.threads:
+        if args.threads > 1:
             log.info("开始并行批量比对（%s，%d 线程）...", align_type, args.threads)
         else:
-            log.info("开始并行批量比对（%s，自动检测到 %d 个CPU核心）...",
-                     align_type, mp.cpu_count())
+            log.info("开始批量比对（%s，单线程）...", align_type)
 
         # ── 运行管道 ──
         pipeline = Pipeline(config=config, ref_seq=ref_seq)
