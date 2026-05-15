@@ -12,12 +12,12 @@ mp.set_start_method('fork', force=True)
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ltlib.models import PipelineConfig, QueryRecord
-from ltlib.pipeline import Pipeline
-from ltlib.lineage import get_amplicon_structure
-from ltlib import read_reference_fasta, read_queries_tsv
-from ltlib.reporting import save_alignment_results, generate_report
-from ltlib.logging_config import get_logger, setup_logging
+from crisviper.models import PipelineConfig, QueryRecord
+from crisviper.pipeline import Pipeline
+from crisviper.lineage import get_amplicon_structure
+from crisviper import read_reference_fasta, read_queries_tsv
+from crisviper.reporting import save_alignment_results, generate_report
+from crisviper.logging_config import get_logger, setup_logging
 
 setup_logging(verbose=True)
 log = get_logger(__name__)

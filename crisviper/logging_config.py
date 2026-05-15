@@ -1,4 +1,4 @@
-"""ltlib/logging_config.py — Logging configuration for lineage-tracer"""
+"""crisviper/logging_config.py — Logging configuration for crisviper"""
 
 import logging
 import sys
@@ -7,18 +7,18 @@ import sys
 # Module-level logger lookup
 def get_logger(name: str) -> logging.Logger:
     """Get a logger for the given module name."""
-    return logging.getLogger(f"lineage-tracer.{name}")
+    return logging.getLogger(f"crisviper.{name}")
 
 
 def setup_logging(verbose: bool = False, quiet: bool = False) -> None:
     """
-    Configure the lineage-tracer logger.
+    Configure the crisviper logger.
 
     Args:
         verbose: Enable DEBUG level output
         quiet: Suppress INFO and below, show only WARNING/ERROR
     """
-    root = logging.getLogger("lineage-tracer")
+    root = logging.getLogger("crisviper")
     root.handlers.clear()
 
     handler = logging.StreamHandler(sys.stderr)

@@ -7,13 +7,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import pytest
 
-from ltlib.denoiser import directional_adjacency_top_down_denoiser
-from ltlib.threshold import compute_threshold
-from ltlib.caller import (
+from crisviper.denoiser import directional_adjacency_top_down_denoiser
+from crisviper.threshold import compute_threshold
+from crisviper.caller import (
     call_alleles_coarse_grain, call_alleles_exact,
     CalledAllele, _event_structure,
 )
-from ltlib.models import (
+from crisviper.models import (
     AlignmentResult, AlignmentStats, QueryRecord,
     MutationEvent, MutationType,
 )

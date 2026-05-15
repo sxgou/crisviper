@@ -1,4 +1,4 @@
-# Lineage Tracer — Snakemake configuration example
+# CrisViper — Snakemake configuration example
 # Usage: snakemake --configfile config.yaml --cores all
 
 # Required

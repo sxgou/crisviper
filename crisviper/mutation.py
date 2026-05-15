@@ -1,12 +1,12 @@
-"""ltlib/mutation.py — 突变识别独立模块
+"""crisviper/mutation.py — 突变识别独立模块
 
 从比对结果中显式提取结构化突变事件。
 这是管道的核心步骤——"突变识别"。
 """
 
 from typing import List, Optional, Tuple
-from ltlib.models import MutationEvent, MutationType, AlignmentStats
-from ltlib.config import CutsiteRegion
+from crisviper.models import MutationEvent, MutationType, AlignmentStats
+from crisviper.config import CutsiteRegion
 
 
 # ═══════════════════════════════════════════════════════════════

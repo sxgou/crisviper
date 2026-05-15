@@ -44,5 +44,8 @@ results/*/*.html
 .deepseek/
 .hermes/
 
+# Project description (not for GitHub)
+项目描述.md
+
 # Test cache
 .pytest_cache/

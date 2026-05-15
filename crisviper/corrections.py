@@ -1,7 +1,7 @@
 """Post-alignment correction functions for repetitive misalignment and artifact removal."""
 
 from typing import Tuple, List, Optional
-from ltlib.config import CutsiteRegion, AmpliconConfig
+from crisviper.config import CutsiteRegion, AmpliconConfig
 
 
 def _adjacent_has_bases(aligned_query: str, col: int, window: int = 3) -> bool:

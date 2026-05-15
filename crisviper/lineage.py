@@ -3,10 +3,10 @@
 import numpy as np
 import re
 from typing import Tuple, Dict, List
-from ltlib.config import CutsiteRegion, AmpliconConfig
-from ltlib.alignment import affine_gap_alignment_position_aware, calculate_alignment_stats
-from ltlib.corrections import filter_point_mutations
-from ltlib.logging_config import get_logger
+from crisviper.config import CutsiteRegion, AmpliconConfig
+from crisviper.alignment import affine_gap_alignment_position_aware, calculate_alignment_stats
+from crisviper.corrections import filter_point_mutations
+from crisviper.logging_config import get_logger
 
 log = get_logger(__name__)
 

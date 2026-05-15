@@ -1,4 +1,4 @@
-"""ltlib/pipeline.py — 谱系示踪分析 管道编排模块
+"""crisviper/pipeline.py — 谱系示踪分析 管道编排模块
 
 将完整分析流程组织为可配置的 Pipeline，包含：
   1. 数据转换（DataLoader）
@@ -25,33 +25,33 @@ from concurrent.futures.process import BrokenProcessPool
 from functools import partial
 from typing import List, Dict, Optional, Tuple, Callable
 
-from ltlib.logging_config import get_logger
-from ltlib.models import (
+from crisviper.logging_config import get_logger
+from crisviper.models import (
     QueryRecord, AlignmentResult, AlignmentStats,
     PipelineConfig, PipelineResult, PipelineStats,
     MutationEvent, MutationType,
 )
-from ltlib.config import CutsiteRegion, AmpliconConfig
-from ltlib.mutation import extract_mutations, build_mutation_summary, annotate_mutations, _build_ref_pos_map_full
-from ltlib.corrections import (
+from crisviper.config import CutsiteRegion, AmpliconConfig
+from crisviper.mutation import extract_mutations, build_mutation_summary, annotate_mutations, _build_ref_pos_map_full
+from crisviper.corrections import (
     convert_dense_mismatch_to_indel,
     filter_point_mutations,
     correct_repetitive_misalignment,
     correct_target_misalignments,
     remove_isolated_matches,
 )
-from ltlib.alignment import (
+from crisviper.alignment import (
     affine_gap_alignment,
     affine_gap_alignment_position_aware,
     calculate_alignment_stats,
 )
-from ltlib.lineage import (
+from crisviper.lineage import (
     lineage_tracer_align,
     build_gap_penalty_profile,
     get_amplicon_structure,
 )
-from ltlib.denoiser import directional_adjacency_top_down_denoiser
-from ltlib.caller import call_alleles_coarse_grain, call_alleles_exact, CalledAllele
+from crisviper.denoiser import directional_adjacency_top_down_denoiser
+from crisviper.caller import call_alleles_coarse_grain, call_alleles_exact, CalledAllele
 
 log = get_logger(__name__)
 

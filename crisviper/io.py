@@ -10,7 +10,7 @@ import csv
 from typing import List, Dict, Optional, Tuple
 from collections import Counter
 from Bio import SeqIO
-from ltlib.logging_config import get_logger
+from crisviper.logging_config import get_logger
 
 log = get_logger(__name__)
 

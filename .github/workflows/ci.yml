@@ -61,7 +61,7 @@ jobs:
 
       - name: Run ruff check
         run: |
-          ruff check ltlib/ carlin_tool.py
+          ruff check crisviper/
 
   build:
     name: Build

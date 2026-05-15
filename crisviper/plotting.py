@@ -5,8 +5,8 @@ import base64
 import sys
 from typing import List, Dict, Tuple, Optional
 import numpy as np
-from ltlib.logging_config import get_logger
-from ltlib.mutation import _build_ref_pos_map_full
+from crisviper.logging_config import get_logger
+from crisviper.mutation import _build_ref_pos_map_full
 
 log = get_logger(__name__)
 

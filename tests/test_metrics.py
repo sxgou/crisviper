@@ -1,11 +1,11 @@
-"""Tests for the metrics module (ltlib/metrics.py)."""
+"""Tests for the metrics module (crisviper/metrics.py)."""
 
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
-from ltlib import (
+from crisviper import (
     effective_alleles, diversity_index,
     alleles_per_cell, singletons_per_cell, carlin_potential,
 )

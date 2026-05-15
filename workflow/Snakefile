@@ -1,4 +1,4 @@
-"""Snakemake workflow for Lineage Tracer CARLIN analysis pipeline.
+"""Snakemake workflow for CrisViper CARLIN analysis pipeline.
 
 Usage:
     snakemake --cores all --use-conda
@@ -53,7 +53,7 @@ if FASTQ and not FASTQ_R2:
         params:
             sample=SAMPLE,
         run:
-            from ltlib import fastq_to_dataframe, save_tsv
+            from crisviper import fastq_to_dataframe, save_tsv
             rows = fastq_to_dataframe(input[0], params.sample)
             save_tsv(rows, output.queries)
 
@@ -68,7 +68,7 @@ elif FASTQ_R1 and FASTQ_R2:
         params:
             sample=SAMPLE,
         run:
-            from ltlib import parse_10x_fastq, filter_sc_cbs_and_umis, save_tsv
+            from crisviper import parse_10x_fastq, filter_sc_cbs_and_umis, save_tsv
             parsed = parse_10x_fastq(input.r1, input.r2)
             masks = filter_sc_cbs_and_umis(
                 parsed["CB"], parsed["read_CB"],
@@ -102,7 +102,7 @@ rule align:
         outdir=OUTDIR,
         lineage=LINEAGE,
     run:
-        from ltlib import (
+        from crisviper import (
             read_reference_fasta, read_queries_tsv,
             PipelineConfig, Pipeline,
             save_alignment_results,
@@ -133,7 +133,7 @@ rule report:
         os.path.join(OUTDIR, "AlleleAnnotations.txt"),
     run:
         import json
-        from ltlib import read_reference_fasta, generate_report, save_text_report
+        from crisviper import read_reference_fasta, generate_report, save_text_report
         with open(input.results) as f:
             results = json.load(f)
         ref_seq = read_reference_fasta(input.reference)

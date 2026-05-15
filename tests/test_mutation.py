@@ -1,11 +1,11 @@
-"""Tests for the mutation detection module (ltlib/mutation.py)."""
+"""Tests for the mutation detection module (crisviper/mutation.py)."""
 
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
-from ltlib import (
+from crisviper import (
     extract_mutations, classify_mutation_type,
     MutationEvent, MutationType, AlignmentStats,
     CutsiteRegion,
@@ -184,14 +184,14 @@ class TestBuildMutationSummary:
     """build_mutation_summary — 汇总统计"""
 
     def test_empty(self):
-        from ltlib import build_mutation_summary
+        from crisviper import build_mutation_summary
         summary = build_mutation_summary([])
         assert summary["type_counts"] == {}
         assert summary["ins_lengths"] == []
         assert summary["total_mismatches"] == 0
 
     def test_single_mutated(self):
-        from ltlib import build_mutation_summary, AlignmentResult, QueryRecord, AlignmentStats
+        from crisviper import build_mutation_summary, AlignmentResult, QueryRecord, AlignmentStats
         result = AlignmentResult(
             query=QueryRecord(readName="test", readCount=5, seq="ACGT"),
             success=True,
@@ -203,7 +203,7 @@ class TestBuildMutationSummary:
         assert summary["total_mismatches"] == 1
 
     def test_skips_failed_results(self):
-        from ltlib import build_mutation_summary, AlignmentResult, QueryRecord
+        from crisviper import build_mutation_summary, AlignmentResult, QueryRecord
         result = AlignmentResult(
             query=QueryRecord(readName="test", seq="ACGT"),
             success=False,
@@ -220,40 +220,40 @@ class TestBuildMutationSummary:
 class TestAnnotateMutation:
     def test_substitution(self):
         m = MutationEvent(type=MutationType.SUBSTITUTION, ref_pos=40, ref_base="G", query_base="T")
-        from ltlib.mutation import annotate_mutation
+        from crisviper.mutation import annotate_mutation
         assert annotate_mutation(m) == "41G>T"
 
     def test_deletion_single(self):
         m = MutationEvent(type=MutationType.DELETION, ref_pos=40, length=1)
-        from ltlib.mutation import annotate_mutation
+        from crisviper.mutation import annotate_mutation
         assert annotate_mutation(m) == "41del"
 
     def test_deletion_multi(self):
         m = MutationEvent(type=MutationType.DELETION, ref_pos=40, length=3)
-        from ltlib.mutation import annotate_mutation
+        from crisviper.mutation import annotate_mutation
         assert annotate_mutation(m) == "41_43del"
 
     def test_insertion_short(self):
         m = MutationEvent(type=MutationType.INSERTION, ref_pos=40, length=3, query_base="---XYZ")
-        from ltlib.mutation import annotate_mutation
+        from crisviper.mutation import annotate_mutation
         assert annotate_mutation(m) == "41_42ins3"
         assert annotate_mutation(m, full=True) == "41_42insXYZ"
 
     def test_complex_short(self):
         m = MutationEvent(type=MutationType.COMPLEX, ref_pos=40, length=5, query_base="---XYZ")
-        from ltlib.mutation import annotate_mutation
+        from crisviper.mutation import annotate_mutation
         assert annotate_mutation(m) == "41_45delins3"
         assert annotate_mutation(m, full=True) == "41_45delinsXYZ"
 
     def test_multiple_mutations(self):
-        from ltlib.mutation import annotate_mutations
+        from crisviper.mutation import annotate_mutations
         m1 = MutationEvent(type=MutationType.SUBSTITUTION, ref_pos=40, ref_base="G", query_base="T")
         m2 = MutationEvent(type=MutationType.DELETION, ref_pos=100, length=5)
         result = annotate_mutations([m1, m2])
         assert result == "41G>T;101_105del"
 
     def test_empty_list(self):
-        from ltlib.mutation import annotate_mutations
+        from crisviper.mutation import annotate_mutations
         assert annotate_mutations([]) == ""
 
 
@@ -265,30 +265,30 @@ class TestIdentifySequenceEvents:
     """identify_sequence_events — MATLAB-compatible naive event extraction"""
 
     def test_identical(self):
-        from ltlib.mutation import identify_sequence_events
+        from crisviper.mutation import identify_sequence_events
         assert identify_sequence_events("ACGT", "ACGT", "ACGT") == []
 
     def test_empty(self):
-        from ltlib.mutation import identify_sequence_events
+        from crisviper.mutation import identify_sequence_events
         assert identify_sequence_events("", "", "") == []
         assert identify_sequence_events("ACGT", "AC", "ACGT") == []
 
     def test_substitution(self):
-        from ltlib.mutation import identify_sequence_events
+        from crisviper.mutation import identify_sequence_events
         events = identify_sequence_events("ACGT", "ACCT", "ACGT")
         assert len(events) == 1
         assert events[0].type == MutationType.SUBSTITUTION
         assert events[0].ref_pos == 2
 
     def test_multi_substitution(self):
-        from ltlib.mutation import identify_sequence_events
+        from crisviper.mutation import identify_sequence_events
         events = identify_sequence_events("ACGTACGT", "ACCTACAT", "ACGTACGT")
         assert len(events) == 2
         assert events[0].ref_pos == 2
         assert events[1].ref_pos == 6
 
     def test_deletion_single(self):
-        from ltlib.mutation import identify_sequence_events
+        from crisviper.mutation import identify_sequence_events
         events = identify_sequence_events("ACGT", "A-GT", "ACGT")
         assert len(events) == 1
         assert events[0].type == MutationType.DELETION
@@ -296,7 +296,7 @@ class TestIdentifySequenceEvents:
         assert events[0].ref_pos == 1
 
     def test_deletion_multi(self):
-        from ltlib.mutation import identify_sequence_events
+        from crisviper.mutation import identify_sequence_events
         events = identify_sequence_events("ACGTACG", "A-----G", "ACGTACG")
         assert len(events) == 1
         assert events[0].type == MutationType.DELETION
@@ -304,39 +304,39 @@ class TestIdentifySequenceEvents:
         assert events[0].ref_pos == 1
 
     def test_insertion(self):
-        from ltlib.mutation import identify_sequence_events
+        from crisviper.mutation import identify_sequence_events
         events = identify_sequence_events("AC--T", "ACGGT", "ACGT")
         assert len(events) >= 1
         assert any(e.type == MutationType.INSERTION for e in events)
 
     def test_leading_insertion(self):
-        from ltlib.mutation import identify_sequence_events
+        from crisviper.mutation import identify_sequence_events
         events = identify_sequence_events("--ACGT", "GGACGT", "ACGT")
         assert any(e.type == MutationType.INSERTION for e in events)
 
     def test_trailing_insertion(self):
-        from ltlib.mutation import identify_sequence_events
+        from crisviper.mutation import identify_sequence_events
         events = identify_sequence_events("ACGT--", "ACGTCC", "ACGT")
         assert any(e.type == MutationType.INSERTION for e in events)
 
     def test_mixed_events(self):
-        from ltlib.mutation import identify_sequence_events
+        from crisviper.mutation import identify_sequence_events
         events = identify_sequence_events("ACGTACGT", "A-CTA-GT", "ACGTACGT")
         types = {e.type for e in events}
         assert len(events) >= 2
 
     def test_after_cutsite_insertion(self):
         """Insertion immediately after a cutsite gets loc = cur_bp+1"""
-        from ltlib.mutation import identify_sequence_events
-        from ltlib.config import CutsiteRegion
+        from crisviper.mutation import identify_sequence_events
+        from crisviper.config import CutsiteRegion
         cutsites = [CutsiteRegion("T1", 1, 2)]
         events = identify_sequence_events("ACG--T", "ACGTGT", "ACGT", cutsites)
         ins_events = [e for e in events if e.type == MutationType.INSERTION]
         assert len(ins_events) >= 1
 
     def test_cutsite_window(self):
-        from ltlib.mutation import identify_sequence_events
-        from ltlib.config import CutsiteRegion
+        from crisviper.mutation import identify_sequence_events
+        from crisviper.config import CutsiteRegion
         cutsites = [CutsiteRegion("T1", 5, 10)]
         events = identify_sequence_events(
             "ACGTACGTACGT", "ACGTACGAACGT", "ACGTACGTACGT",
@@ -347,8 +347,8 @@ class TestIdentifySequenceEvents:
         assert sub_events[0].in_cutsite_window
 
     def test_outside_cutsite_window(self):
-        from ltlib.mutation import identify_sequence_events
-        from ltlib.config import CutsiteRegion
+        from crisviper.mutation import identify_sequence_events
+        from crisviper.config import CutsiteRegion
         cutsites = [CutsiteRegion("T1", 1, 3)]
         events = identify_sequence_events(
             "ACGTACGTACGT", "ACGTACGAACGT", "ACGTACGTACGT",
@@ -363,34 +363,34 @@ class TestIdentifyCas9Events:
     """identify_cas9_events — MATLAB compound event merging"""
 
     def test_no_events(self):
-        from ltlib.mutation import identify_cas9_events
+        from crisviper.mutation import identify_cas9_events
         assert identify_cas9_events("ACGT", "ACGT", "ACGT", []) == []
 
     def test_compound_adjacent_indels(self):
         """Adjacent deletion+insertion merged into COMPLEX"""
-        from ltlib.mutation import identify_cas9_events
+        from crisviper.mutation import identify_cas9_events
         events = identify_cas9_events("ACGT--AC", "AC--GGAC", "ACGTAC", [])
         assert len(events) == 1
         assert events[0].type == MutationType.COMPLEX
 
     def test_substitution_preserved(self):
         """Single substitution remains unchanged"""
-        from ltlib.mutation import identify_cas9_events
+        from crisviper.mutation import identify_cas9_events
         events = identify_cas9_events("ACGT", "ACCT", "ACGT", [])
         assert len(events) == 1
         assert events[0].type == MutationType.SUBSTITUTION
 
     def test_deletion_preserved(self):
         """Single deletion remains unchanged"""
-        from ltlib.mutation import identify_cas9_events
+        from crisviper.mutation import identify_cas9_events
         events = identify_cas9_events("ACGT", "A-GT", "ACGT", [])
         assert len(events) == 1
         assert events[0].type == MutationType.DELETION
 
     def test_separate_events_not_merged(self):
         """Distant events in different sites remain separate"""
-        from ltlib.mutation import identify_cas9_events
-        from ltlib.config import CutsiteRegion
+        from crisviper.mutation import identify_cas9_events
+        from crisviper.config import CutsiteRegion
         # Two distant substitutions in different targets should not merge
         cutsites = [CutsiteRegion("T1", 0, 1), CutsiteRegion("T2", 5, 6)]
         events = identify_cas9_events(
@@ -402,7 +402,7 @@ class TestIdentifyCas9Events:
 
     def test_annotation_roundtrip(self):
         """Events from identify_cas9_events produce correct annotations"""
-        from ltlib.mutation import identify_cas9_events, annotate_mutations
+        from crisviper.mutation import identify_cas9_events, annotate_mutations
         events = identify_cas9_events("ACGT", "ACCT", "ACGT", [])
         ann = annotate_mutations(events)
         assert "3" in ann  # position 2 (0-based) → 3 (1-based)
@@ -410,7 +410,7 @@ class TestIdentifyCas9Events:
 
     def test_compound_annotation(self):
         """Compound events produce delins annotation"""
-        from ltlib.mutation import identify_cas9_events, annotate_mutations
+        from crisviper.mutation import identify_cas9_events, annotate_mutations
         events = identify_cas9_events("ACGT--AC", "AC--GGAC", "ACGTAC", [])
         ann = annotate_mutations(events)
         # The two events (DEL+C at 2-3, INS+GG at 3-4) merge to
@@ -419,7 +419,7 @@ class TestIdentifyCas9Events:
 
     def test_insertion_type_promoted_to_complex(self):
         """Insertion with both ends changed promoted to COMPLEX"""
-        from ltlib.mutation import identify_cas9_events
+        from crisviper.mutation import identify_cas9_events
         events = identify_cas9_events("A--C", "AGGC", "AC", [])
         # INS between A and C: GG inserted
         # In identify_cas9_events, check if seq_new[0]!=seq_old[0] and seq_new[-1]!=seq_old[-1]
@@ -435,14 +435,14 @@ class TestClassifyBpEvent:
     """classify_bp_event — per-base event classification"""
 
     def test_no_events(self):
-        from ltlib.mutation import classify_bp_event
+        from crisviper.mutation import classify_bp_event
         bp, de, ins = classify_bp_event([], 10)
         assert bp == ['N'] * 10
         assert de == [False] * 10
         assert ins == [False] * 10
 
     def test_substitution(self):
-        from ltlib.mutation import classify_bp_event, MutationEvent, MutationType
+        from crisviper.mutation import classify_bp_event, MutationEvent, MutationType
         ev = MutationEvent(type=MutationType.SUBSTITUTION, ref_pos=5, ref_base='G', query_base='T', length=1)
         bp, de, ins = classify_bp_event([ev], 10)
         assert bp[5] == 'I'
@@ -450,7 +450,7 @@ class TestClassifyBpEvent:
         assert ins[5] is True
 
     def test_deletion(self):
-        from ltlib.mutation import classify_bp_event, MutationEvent, MutationType
+        from crisviper.mutation import classify_bp_event, MutationEvent, MutationType
         ev = MutationEvent(type=MutationType.DELETION, ref_pos=3, length=4)
         bp, de, ins = classify_bp_event([ev], 10)
         for i in range(3, 7):
@@ -459,7 +459,7 @@ class TestClassifyBpEvent:
         assert not any(ins)
 
     def test_insertion(self):
-        from ltlib.mutation import classify_bp_event, MutationEvent, MutationType
+        from crisviper.mutation import classify_bp_event, MutationEvent, MutationType
         ev = MutationEvent(type=MutationType.INSERTION, ref_pos=2, query_base='XYZ', length=3)
         bp, de, ins = classify_bp_event([ev], 10)
         assert ins[2] is True
@@ -467,7 +467,7 @@ class TestClassifyBpEvent:
         assert bp[2] == 'I'
 
     def test_complex(self):
-        from ltlib.mutation import classify_bp_event, MutationEvent, MutationType
+        from crisviper.mutation import classify_bp_event, MutationEvent, MutationType
         ev = MutationEvent(type=MutationType.COMPLEX, ref_pos=3, query_base='XYZ', length=5)
         bp, de, ins = classify_bp_event([ev], 10)
         # deletion span

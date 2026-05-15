@@ -6,7 +6,7 @@ call_alleles_exact.
 
 from typing import List, Optional, Tuple
 from dataclasses import dataclass, field
-from ltlib.models import AlignmentResult, MutationEvent, MutationType
+from crisviper.models import AlignmentResult, MutationEvent, MutationType
 
 
 # ═══════════════════════════════════════════════════════════════

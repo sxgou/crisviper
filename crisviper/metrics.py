@@ -1,4 +1,4 @@
-"""ltlib/metrics.py — diversity and heterogeneity metrics.
+"""crisviper/metrics.py — diversity and heterogeneity metrics.
 
 MATLAB equivalents from matlab_version/metrics/:
   - effective_alleles:     Shannon entropy → effective allele count

@@ -1,4 +1,4 @@
-"""End-to-end integration test for the full lineage-tracer pipeline.
+"""End-to-end integration test for the full crisviper pipeline.
 
 Tests the complete flow:
   1. Creates synthetic CARLIN-like reference and query sequences
@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from ltlib import (
+from crisviper import (
     Pipeline, PipelineConfig, QueryRecord,
     align_single, check_primer_anchoring,
     read_reference_fasta, read_queries_tsv,
@@ -264,7 +264,7 @@ class TestEndToEndPipeline:
         save_path = os.path.join(self.temp_dir, "test_queries.tsv")
 
         # 先写入TSV
-        from ltlib import save_tsv
+        from crisviper import save_tsv
         dict_rows = [{"readName": q.readName, "cellBC": q.cellBC,
                       "UMI": q.UMI, "readCount": q.readCount, "seq": q.seq}
                      for q in self.queries]
@@ -328,7 +328,7 @@ class TestEndToEndPipeline:
 
     def test_align_single_function(self):
         """align_single 函数可直接调用"""
-        from ltlib import align_single, PipelineConfig
+        from crisviper import align_single, PipelineConfig
         config = PipelineConfig()
         result = align_single(self.queries[0], self.ref_seq, config)
         assert result is not None

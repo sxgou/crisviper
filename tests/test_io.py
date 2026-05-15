@@ -1,11 +1,11 @@
-"""Tests for single-cell FASTQ parsing (ltlib/io.py)."""
+"""Tests for single-cell FASTQ parsing (crisviper/io.py)."""
 
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
-from ltlib import (
+from crisviper import (
     parse_10x_provenance, parse_10x_fastq,
     filter_sc_cbs_and_umis, parse_indrops_provenance,
 )

@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lineage-tracer"
+name = "crisviper"
 version = "1.0.0"
 description = "谱系示踪序列分析命令行工具 — 仿射gap比对、突变检测、谱系示踪分析"
 readme = "README.md"
@@ -34,10 +34,10 @@ classifiers = [
 Repository = "https://github.com/sxgou/lineage-tracer"
 
 [project.scripts]
-lineage-tracer = "ltlib.cli:main"
+crisviper = "crisviper.cli:main"
 
 [tool.setuptools]
-packages = {find = {include = ["ltlib", "ltlib.*"]}}
+packages = {find = {include = ["crisviper", "crisviper.*"]}}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

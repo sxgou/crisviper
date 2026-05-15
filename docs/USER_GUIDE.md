@@ -1,4 +1,4 @@
-# CARLIN序列分析工具使用手册
+# CrisViper序列分析工具使用手册
 
 ## 目录
 
@@ -34,8 +34,8 @@ pip install -r requirements.txt
 
 3. **验证安装**
 ```bash
-lineage-tracer --version
-lineage-tracer --help
+crisviper --version
+crisviper --help
 ```
 
 ### 依赖说明
@@ -48,13 +48,13 @@ lineage-tracer --help
 
 ```bash
 # 1. 将FASTQ转换为TSV格式
-lineage-tracer convert fastq-to-tsv \
+crisviper convert fastq-to-tsv \
   --fastq example_data/test.fastq.gz \
   --output my_sample_queries.tsv \
   --sample-name my_sample
 
 # 2. 批量序列比对
-lineage-tracer align \
+crisviper align \
   --reference example_data/reference.fa \
   --queries my_sample_queries.tsv \
   --output my_sample_alignments.json \
@@ -65,7 +65,7 @@ lineage-tracer align \
 
 ```bash
 # 谱系示踪模式（自动推断cutsite位置，过滤假阳性突变）
-lineage-tracer align \
+crisviper align \
   --reference example_data/reference.fa \
   --queries my_sample_queries.tsv \
   --output my_sample_lt_results.json \
@@ -73,7 +73,7 @@ lineage-tracer align \
   --report html
 
 # 参数微调
-lineage-tracer align \
+crisviper align \
   --reference example_data/reference.fa \
   --queries my_sample_queries.tsv \
   --output my_sample_lt_results.json \
@@ -100,14 +100,14 @@ mkdir -p results
 
 # 步骤1: FASTQ转换
 echo "步骤1: 转换FASTQ文件..."
-lineage-tracer convert fastq-to-tsv \
+crisviper convert fastq-to-tsv \
   --fastq "${FASTQ_FILE}" \
   --output "${OUTPUT_PREFIX}_queries.tsv" \
   --sample-name "${SAMPLE_NAME}"
 
 # 步骤2: 谱系示踪比对并生成报告
 echo "步骤2: 谱系示踪比对..."
-lineage-tracer align \
+crisviper align \
   --reference "${REFERENCE}" \
   --queries "${OUTPUT_PREFIX}_queries.tsv" \
   --output "${OUTPUT_PREFIX}_alignments.json" \
@@ -121,7 +121,7 @@ echo "分析完成！查看报告: ${OUTPUT_PREFIX}_alignments_report.html"
 
 ### 主命令结构
 ```
-lineage-tracer <command> <subcommand> [选项]
+crisviper <command> <subcommand> [选项]
 ```
 
 ### 转换命令 (convert)
@@ -136,7 +136,7 @@ lineage-tracer <command> <subcommand> [选项]
 
 **示例**：
 ```bash
-lineage-tracer convert fastq-to-tsv \
+crisviper convert fastq-to-tsv \
   --fastq reads.fastq.gz \
   --output reads.tsv \
   --sample-name patient_01
@@ -152,7 +152,7 @@ lineage-tracer convert fastq-to-tsv \
 
 **示例**：
 ```bash
-lineage-tracer convert fastq-to-fasta \
+crisviper convert fastq-to-fasta \
   --fastq reads.fastq.gz \
   --output reads.fasta \
   --sample-name cell_line_A
@@ -212,20 +212,20 @@ lineage-tracer convert fastq-to-fasta \
 **示例**：
 ```bash
 # 使用默认参数，输出JSON
-lineage-tracer align \
+crisviper align \
   --reference ref.fasta \
   --queries queries.tsv \
   --output alignments.json
 
 # 谱系示踪模式
-lineage-tracer align \
+crisviper align \
   --reference ref.fasta \
   --queries queries.tsv \
   --output lt_results.json \
   --lineage
 
 # 谱系示踪模式+自定义参数
-lineage-tracer align \
+crisviper align \
   --reference ref.fasta \
   --queries queries.tsv \
   --output lt_results.json \
@@ -236,7 +236,7 @@ lineage-tracer align \
   --mutation-window 4
 
 # 谱系示踪模式+手动指定cutsite
-lineage-tracer align \
+crisviper align \
   --reference ref.fasta \
   --queries queries.tsv \
   --output lt_results.json \
@@ -244,7 +244,7 @@ lineage-tracer align \
   --cutsites my_cutsites.json
 
 # 同时输出JSON和TSV，生成HTML报告
-lineage-tracer align \
+crisviper align \
   --reference ref.fasta \
   --queries queries.tsv \
   --output results/prefix \
@@ -329,7 +329,7 @@ lineage-tracer align \
 #### 自动推断（默认）
 标准CARLIN扩增子（332bp）自动识别10个cutsite：
 ```bash
-lineage-tracer align --lineage ...
+crisviper align --lineage ...
 ```
 
 #### 手动指定（JSON格式）
@@ -497,14 +497,14 @@ IIIIIIII
 **示例**：
 ```bash
 # 标准比对 + HTML报告
-lineage-tracer align \
+crisviper align \
   --reference ref.fasta \
   --queries queries.tsv \
   --output results.json \
   --report html
 
 # 谱系示踪比对 + HTML报告
-lineage-tracer align \
+crisviper align \
   --reference ref.fasta \
   --queries queries.tsv \
   --output results.json \
@@ -611,14 +611,14 @@ mkdir -p "${OUTPUT_DIR}"
 
 # 转换FASTQ
 echo "转换FASTQ文件..."
-lineage-tracer convert fastq-to-tsv \
+crisviper convert fastq-to-tsv \
   --fastq "${FASTQ}" \
   --output "${OUTPUT_DIR}/${SAMPLE}_queries.tsv" \
   --sample-name "${SAMPLE}"
 
 # 谱系示踪比对 + HTML分析报告
 echo "运行谱系示踪比对..."
-lineage-tracer align \
+crisviper align \
   --reference "${REFERENCE}" \
   --queries "${OUTPUT_DIR}/${SAMPLE}_queries.tsv" \
   --output "${OUTPUT_DIR}/${SAMPLE}_results" \
@@ -651,12 +651,12 @@ for SAMPLE in "${SAMPLES[@]}"; do
     fi
     
     # 转换和谱系示踪比对
-    lineage-tracer convert fastq-to-tsv \
+    crisviper convert fastq-to-tsv \
         --fastq "${FASTQ}" \
         --output "${OUTPUT_PREFIX}_queries.tsv" \
         --sample-name "${SAMPLE}"
     
-    lineage-tracer align \
+    crisviper align \
         --reference "${REFERENCE}" \
         --queries "${OUTPUT_PREFIX}_queries.tsv" \
         --output "${OUTPUT_PREFIX}_results.json" \
@@ -681,14 +681,14 @@ OUTPUT_DIR="comparison"
 mkdir -p "${OUTPUT_DIR}"
 
 # 标准比对
-lineage-tracer align \
+crisviper align \
   --reference "${REFERENCE}" \
   --queries "${QUERIES}" \
   --output "${OUTPUT_DIR}/standard.json"
 echo "标准比对完成"
 
 # 谱系示踪 - 默认参数
-lineage-tracer align \
+crisviper align \
   --reference "${REFERENCE}" \
   --queries "${QUERIES}" \
   --output "${OUTPUT_DIR}/lineage_default.json" \
@@ -696,7 +696,7 @@ lineage-tracer align \
 echo "谱系示踪(默认)完成"
 
 # 谱系示踪 - 严格模式
-lineage-tracer align \
+crisviper align \
   --reference "${REFERENCE}" \
   --queries "${QUERIES}" \
   --output "${OUTPUT_DIR}/lineage_strict.json" \
@@ -728,7 +728,7 @@ cat > my_cutsites.json << 'EOF'
 EOF
 
 # 使用配置文件
-lineage-tracer align \
+crisviper align \
   --reference ref.fasta \
   --queries queries.tsv \
   --output results.json \
@@ -787,7 +787,7 @@ pip install biopython
 
 对于复杂问题，可以添加调试输出：
 ```python
-# 在ltlib/cli.py中添加调试代码
+# 在crisviper/cli.py中添加调试代码
 import logging
 logging.basicConfig(level=logging.DEBUG)
 ```
@@ -801,13 +801,13 @@ logging.basicConfig(level=logging.DEBUG)
 **基本用法**：
 ```bash
 # 自动使用所有CPU核心
-lineage-tracer align \
+crisviper align \
   --reference ref.fasta \
   --queries queries.tsv \
   --output alignments.json
 
 # 手动指定进程数
-lineage-tracer align \
+crisviper align \
   --reference ref.fasta \
   --queries queries.tsv \
   --output alignments.json \
@@ -862,7 +862,7 @@ for BATCH in "${OUTPUT_DIR}"/batch_*; do
     
     echo "处理批次: ${BATCH_NAME}"
     
-    lineage-tracer align \
+    crisviper align \
         --reference "${REFERENCE}" \
         --queries "${BATCH}" \
         --output "${OUTPUT_FILE}" \
@@ -887,12 +887,12 @@ process_sample() {
     FASTQ="data/${SAMPLE}.fastq.gz"
     OUTPUT="results/${SAMPLE}_alignments.json"
     
-    lineage-tracer convert fastq-to-tsv \
+    crisviper convert fastq-to-tsv \
         --fastq "${FASTQ}" \
         --output "temp/${SAMPLE}.tsv" \
         --sample-name "${SAMPLE}"
     
-    lineage-tracer align \
+    crisviper align \
         --reference "${REFERENCE}" \
         --queries "temp/${SAMPLE}.tsv" \
         --output "${OUTPUT}" \
@@ -918,11 +918,11 @@ rm -rf temp
 ### 获取帮助
 ```bash
 # 查看所有命令
-lineage-tracer --help
+crisviper --help
 
 # 查看特定命令帮助
-lineage-tracer convert --help
-lineage-tracer align --help
+crisviper convert --help
+crisviper align --help
 ```
 
 ### 报告问题
@@ -934,7 +934,7 @@ lineage-tracer align --help
 
 ### 版本信息
 ```bash
-lineage-tracer --version
+crisviper --version
 ```
 
 ---

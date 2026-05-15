@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 import numpy as np
-from ltlib import (
+from crisviper import (
     affine_gap_alignment,
     affine_gap_alignment_position_aware,
     build_gap_penalty_profile,
@@ -178,14 +178,14 @@ class TestCorrectionCompatibility:
     """gap_exit_bonus 与现有矫正管线兼容"""
 
     def test_remove_isolated_matches_still_works(self):
-        from ltlib.corrections import remove_isolated_matches
+        from crisviper.corrections import remove_isolated_matches
         ar, aq = "ACGTACGT", "ACG-A--T"
         _, aq_c, modified = remove_isolated_matches(ar, aq)
         assert modified
         assert aq_c == "ACG----T"
 
     def test_convert_dense_mismatch_still_works(self):
-        from ltlib.corrections import convert_dense_mismatch_to_indel
+        from crisviper.corrections import convert_dense_mismatch_to_indel
         ar = "AAAAAACCCC"
         aq = "AAAATTTTCC"
         _, _, modified = convert_dense_mismatch_to_indel(ar, aq, threshold=0.34)
@@ -341,14 +341,14 @@ class TestHomologyPenalty:
         assert s1 <= s0 + 1e-9
 
     def test_build_homology_profile_length(self):
-        from ltlib.lineage import build_homology_penalty_profile
+        from crisviper.lineage import build_homology_penalty_profile
         ref = "ACGTACGTACGT"
         profile = build_homology_penalty_profile(ref, homology_window=4, homology_penalty=-1.0)
         assert len(profile) == len(ref)
         assert np.any(profile < 0)
 
     def test_unique_sequence_no_penalty(self):
-        from ltlib.lineage import build_homology_penalty_profile
+        from crisviper.lineage import build_homology_penalty_profile
         ref = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         profile = build_homology_penalty_profile(ref, homology_window=4, homology_penalty=-1.0)
         assert np.all(profile == 0.0)
@@ -420,14 +420,14 @@ class TestCorrectionPipelineControl:
         assert result.stats.successful == 1
 
     def test_build_correction_list_lineage_mode(self):
-        from ltlib.pipeline import _build_correction_list
+        from crisviper.pipeline import _build_correction_list
         config = PipelineConfig(lineage_mode=True)
         corr = _build_correction_list(config, lineage_mode=True)
         assert "convert_dense_mismatch_to_indel" not in corr
         assert "filter_point_mutations" not in corr
 
     def test_build_correction_list_standard_mode(self):
-        from ltlib.pipeline import _build_correction_list
+        from crisviper.pipeline import _build_correction_list
         config = PipelineConfig(lineage_mode=False)
         corr = _build_correction_list(config, lineage_mode=False)
         assert "convert_dense_mismatch_to_indel" in corr

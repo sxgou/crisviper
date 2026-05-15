@@ -1,6 +1,4 @@
-# Lineage Tracer — 谱系示踪序列分析工具
-
-[![CI](https://github.com/NousResearch/lineage-tracer/actions/workflows/ci.yml/badge.svg)](https://github.com/NousResearch/lineage-tracer/actions/workflows/ci.yml)
+# CrisViper — 谱系示踪序列分析工具
 
 基于仿射gap惩罚算法的序列比对命令行工具，支持**结构感知的谱系示踪比对模式**、**NumPy向量化DP加速**、多进程并行加速和FASTQ格式转换。专为多靶点基因编辑谱系示踪实验设计。
 
@@ -46,7 +44,7 @@ pip install -r requirements.txt
 
 1. **将FASTQ转换为TSV格式**：
 ```bash
-lineage-tracer convert fastq-to-tsv \
+crisviper convert fastq-to-tsv \
   --fastq reads.fastq.gz \
   --output reads.tsv \
   --sample-name my_sample
@@ -54,7 +52,7 @@ lineage-tracer convert fastq-to-tsv \
 
 2. **标准并行批量序列比对**（自动使用所有CPU核心）：
 ```bash
-lineage-tracer align \
+crisviper align \
   --reference reference.fasta \
   --queries queries.tsv \
   --output alignments.json
@@ -62,7 +60,7 @@ lineage-tracer align \
 
 3. **谱系示踪比对模式**（结构感知，自动推断cutsite位置）：
 ```bash
-lineage-tracer align \
+crisviper align \
   --reference reference.fasta \
   --queries queries.tsv \
   --output alignments.json \
@@ -71,7 +69,7 @@ lineage-tracer align \
 
 4. **谱系模式 + DP原生特征 + 报告**：
 ```bash
-lineage-tracer align \
+crisviper align \
   --reference example_data/reference.fa \
   --queries example_data/test_queries.tsv \
   --output results/prefix \
@@ -87,7 +85,7 @@ lineage-tracer align \
 
 5. **指定并行进程数**：
 ```bash
-lineage-tracer align \
+crisviper align \
   --reference reference.fasta \
   --queries queries.tsv \
   --output alignments.json \
@@ -98,8 +96,8 @@ lineage-tracer align \
 
 ```
 .
-├── ltlib/                     # 核心库（模块化包结构）
-│   ├── cli.py                 # 命令行工具主程序（lineage-tracer命令入口）
+├── crisviper/                     # 核心库（模块化包结构）
+│   ├── cli.py                 # 命令行工具主程序（crisviper命令入口）
 │   ├── alignment.py           # DP比对算法（标准+位置感知+向量化）
 │   ├── lineage.py             # 谱系示踪：gap profile, cutsite检测
 │   ├── pipeline.py            # 管线编排（8步流程+ProcessPoolExecutor）
@@ -203,5 +201,5 @@ MIT License
 如有问题或建议，请：
 1. 确保已安装所有依赖 (`pip install -r requirements.txt`)
 2. 查看详细文档：`docs/ALGORITHM.md` 和 `docs/USER_GUIDE.md`
-3. 使用帮助命令：`lineage-tracer --help`
-4. 谱系示踪模式：`lineage-tracer align --help`
+3. 使用帮助命令：`crisviper --help`
+4. 谱系示踪模式：`crisviper align --help`

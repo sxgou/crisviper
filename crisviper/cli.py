@@ -1,4 +1,4 @@
-"""lineage-tracer CLI — 谱系示踪序列分析命令行工具
+"""crisviper CLI — 谱系示踪序列分析命令行工具
 
 基于仿射gap惩罚算法的序列比对工具，支持FASTQ转换和并行批量比对。
 
@@ -7,15 +7,15 @@
   align     并行批量将TSV或FASTA格式中的序列与reference进行比对
 
 示例:
-  $ lineage-tracer convert fastq-to-tsv --fastq reads.fastq.gz --output reads.tsv
-  $ lineage-tracer align --reference ref.fasta --queries queries.tsv --output alignments.json
-  $ lineage-tracer align --reference ref.fasta --queries queries.tsv --output results/prefix --format all --report html
+  $ crisviper convert fastq-to-tsv --fastq reads.fastq.gz --output reads.tsv
+  $ crisviper align --reference ref.fasta --queries queries.tsv --output alignments.json
+  $ crisviper align --reference ref.fasta --queries queries.tsv --output results/prefix --format all --report html
 """
 
 import argparse
 import sys
 import os
-# 防止 fork + NumPy 线程冲突（在 import ltlib 之前设置）
+# 防止 fork + NumPy 线程冲突（在 import crisviper 之前设置）
 os.environ.setdefault('OMP_NUM_THREADS', '1')
 os.environ.setdefault('MKL_NUM_THREADS', '1')
 os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
@@ -23,7 +23,7 @@ os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
 import multiprocessing as mp
 from typing import List, Dict
 
-from ltlib import (
+from crisviper import (
     PipelineConfig, PipelineResult, AlignmentResult, QueryRecord,
     fastq_to_dataframe, fastq_to_fasta, save_tsv,
     read_reference_fasta, read_queries_tsv, read_queries_fasta,
@@ -46,7 +46,7 @@ def _queries_to_records(queries: List[Dict]) -> List[QueryRecord]:
 def main():
     setup_logging(quiet=False)
     parser = argparse.ArgumentParser(
-        description="lineage-tracer — 谱系示踪序列分析命令行工具",
+        description="crisviper — 谱系示踪序列分析命令行工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
@@ -292,7 +292,7 @@ def _default_report_path(output_path: str) -> str:
 def _get_display_cutsites(ref_seq: str, lineage_mode: bool):
     """获取用于热图标注的cutsite信息"""
     try:
-        from ltlib import get_amplicon_structure
+        from crisviper import get_amplicon_structure
         cs = get_amplicon_structure(ref_seq)
         if cs:
             log.info("自动检测到 %d 个cutsite区域（用于热图标注）", len(cs))
