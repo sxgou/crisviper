@@ -29,7 +29,7 @@ CHUNK_SIZE = 100       # 全量测试用稍大batch提升吞吐
 
 ref_path = "example_data/reference.fa"
 queries_path = "example_data/test_queries.tsv"
-out_root = "results_new"
+out_root = "results"
 
 # ── 读取数据 ──
 log.info("读取reference...")
@@ -193,7 +193,7 @@ for s in summaries:
     if s['total_reads'] > 0:
         rows.append(f"    突变reads: {s['mutated_reads']}/{s['total_reads']} ({s['mutated_reads']/s['total_reads']*100:.1f}%)")
     rows.append(f"    耗时: {s['time_seconds']}s")
-    rows.append(f"    输出: results_new/{'uncorrected' if '关闭' in s['label'] else 'corrected'}/")
+    rows.append(f"    输出: results/{'uncorrected' if '关闭' in s['label'] else 'corrected'}/")
     rows.append("")
 
 print("\n".join(rows))
@@ -202,8 +202,8 @@ print("=" * 70)
 # 写入总体对比
 comparison = {
     "modes": [
-        {"label": "uncorrected", "path": "results_new/uncorrected/"},
-        {"label": "corrected", "path": "results_new/corrected/"},
+        {"label": "uncorrected", "path": "results/uncorrected/"},
+        {"label": "corrected", "path": "results/corrected/"},
     ],
     "uncorrected": s1,
     "corrected": s2,
@@ -211,4 +211,4 @@ comparison = {
 with open(os.path.join(out_root, "comparison.json"), "w") as f:
     json.dump(comparison, f, indent=2, ensure_ascii=False)
 
-print(f"总体对比: results_new/comparison.json")
+print(f"总体对比: results/comparison.json")

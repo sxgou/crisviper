@@ -27,15 +27,18 @@ env/
 .AppleDouble
 .LSOverride
 
-# Project-specific
+# Project-specific - test output data
 results/*.json
 results/*.tsv
 results/*.html
 results/*.txt
 results/.DS_Store
+results/*/*.json
+results/*/*.tsv
+results/*/*.html
 
-# Keep example results if any
-!results/README.md
+# Keep the comparison test script
+!results/run_comparison.py
 
 # Tool-specific
 .deepseek/
@@ -43,10 +46,3 @@ results/.DS_Store
 
 # Test cache
 .pytest_cache/
-
-# Raw results
-results_raw/
-
-# Generated test outputs
-results_new/*
-!results_new/run_comparison.py

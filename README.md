@@ -124,7 +124,7 @@ python carlin_tool.py align \
 │   ├── reference.fa          # CARLIN参考序列
 │   ├── test_queries.tsv      # 查询序列示例（23,430条）
 │   └── test.fastq.gz         # FASTQ测序数据示例
-├── results_new/               # 最新测试结果
+├── results/                   # 测试结果
 │   ├── run_comparison.py     # 对比测试脚本
 │   ├── comparison.json       # 矫正ON/OFF对比摘要
 │   ├── corrected/            # 矫正开启结果
