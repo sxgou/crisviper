@@ -46,3 +46,7 @@ results/.DS_Store
 
 # Raw results
 results_raw/
+
+# Generated test outputs
+results_new/*
+!results_new/run_comparison.py

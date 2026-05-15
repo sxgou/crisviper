@@ -184,6 +184,23 @@ python carlin_tool.py convert fastq-to-fasta \
 - `--density-threshold`: mismatch密度阈值，超此阈值视为insertion（默认: 0.34）
 - `--cutsites`: cutsite位置配置文件（JSON格式），不指定则自动推断标准CARLIN结构
 
+**DP原生特征参数**（谱系模式推荐开启）：
+- `--gap-exit-bonus`: gap→match转换额外惩罚（≤0，默认0.0，推荐-1.0），抑制indel碎片化
+- `--short-match-window`: 短匹配区域阈值bp（默认0=关闭，推荐3-5），低于此长度的连续match打折
+- `--short-match-discount`: 短匹配区域match_score折扣系数（0~1，默认1.0=不打折，推荐0.5）
+- `--dense-mismatch-window`: 密集错配检测窗口bp（默认6）
+- `--dense-mismatch-penalty`: 密集错配区域额外惩罚（≤0，默认0=关闭，推荐-2.0）
+- `--homology-window`: 同源区域检测窗口bp（默认8）
+- `--homology-penalty`: 同源区域match_score惩罚（≤0，默认0=关闭，推荐-1.0）
+- `--isolated-base-penalty`: 孤立碱基匹配额外惩罚（≤0，默认0=关闭，推荐-2.0）
+
+**矫正管线控制**：
+- `--repeat-correction-mode`: 重复序列矫正模式，可选 `auto`（动态检测）、`hardcoded`（硬编码列表）、`off`（关闭），默认 `auto`
+- `--disable-target-misalignment`: 关闭小片段跨靶点矫正
+- `--disable-isolated-match-removal`: 关闭孤立匹配清除
+- `--disable-dense-mismatch-correction`: 关闭后处理密集错配矫正
+- `--disable-point-mutation-filtering`: 关闭点突变过滤
+
 **并行参数**：
 - `--threads`, `-t`: 并行进程数（默认：自动使用所有CPU核心）
 
@@ -805,9 +822,24 @@ python carlin_tool.py align \
 | 4 | ~25% | ~4x |
 | 8 | ~15% | ~6-7x |
 
-> 注：加速比受CPU核心数和序列长度影响。序列越长，并行效率越高。谱系示踪模式比标准模式慢约10-15%。
+> 注：加速比受CPU核心数和序列长度影响。系统默认上限**12线程**以防止CPU过载和系统崩溃。
 
-### 2. 分批处理大型数据集
+### 3. 向量化DP加速
+
+谱系示踪算法v3.0引入了NumPy向量化DP递推，核心优化包括：
+- **Iy和M按行向量化**：每行内所有列的Iy和M状态一次性计算
+- **cumsum对角线密度计算**：使用NumPy cumsum沿矩阵对角线计算密度，替代O(m×n×window)三重循环
+- **评分矩阵预计算**：在DP之前一次性计算完整的m×n评分矩阵
+
+**加速效果**（332bp CARLIN，全部特性开启）：
+
+| 优化项 | 优化前 | 优化后 | 加速比 |
+|--------|--------|--------|--------|
+| 单序列比对 | 1.60s | 0.37s | 4.3x |
+| 批量500条 (12线程) | 34s | 19s | 1.8x |
+| 全量23,430条 (12线程) | ~38min | ~15min | 2.5x |
+
+### 4. 分批处理大型数据集
 
 ```bash
 #!/bin/bash
@@ -907,4 +939,4 @@ python carlin_tool.py --version
 
 ---
 
-*本使用手册最后更新：2026年4月27日（v2.2.0：新增谱系示踪比对模式 `--lineage`）*|
+*本使用手册最后更新：2026年5月15日（v3.0.0：向量化DP加速 + DP原生特征 + 矫正管线控制）*|

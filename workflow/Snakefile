@@ -1,0 +1,147 @@
+"""Snakemake workflow for Lineage Tracer CARLIN analysis pipeline.
+
+Usage:
+    snakemake --cores all --use-conda
+
+Config (config.yaml):
+    reference:  path to CARLIN reference FASTA
+    fastq_r1:   path to R1 FASTQ (CB/UMI, optional for SC)
+    fastq_r2:   path to R2 FASTQ (genomic reads for SC)
+    fastq:      path to bulk FASTQ (single-end)
+    sample:     sample name prefix
+    outdir:     output directory (default: results/)
+    threads:    threads for alignment (default: all cores)
+    lineage:    enable lineage mode (default: false)
+    report:     report format (json/html, default: html)
+"""
+
+import os
+
+
+# ── Config ──────────────────────────────────────────────────
+SAMPLE = config.get("sample", "sample")
+OUTDIR = config.get("outdir", "results")
+THREADS = config.get("threads", None)
+LINEAGE = config.get("lineage", False)
+REPORT = config.get("report", "html")
+
+REFERENCE = config.get("reference", None)
+FASTQ_R1 = config.get("fastq_r1", None)
+FASTQ_R2 = config.get("fastq_r2", None)
+FASTQ = config.get("fastq", None)
+
+assert REFERENCE is not None, "config must specify 'reference'"
+
+
+# ── Rules ───────────────────────────────────────────────────
+
+rule all:
+    input:
+        os.path.join(OUTDIR, f"{SAMPLE}_report.{'html' if REPORT == 'html' else 'json'}"),
+        os.path.join(OUTDIR, "Results.txt"),
+        os.path.join(OUTDIR, "Warnings.txt"),
+        os.path.join(OUTDIR, "AlleleAnnotations.txt"),
+
+
+if FASTQ and not FASTQ_R2:
+    # ── Bulk mode (single FASTQ) ──
+    rule convert_fastq:
+        input:
+            FASTQ,
+        output:
+            queries=os.path.join(OUTDIR, f"{SAMPLE}_queries.tsv"),
+        params:
+            sample=SAMPLE,
+        run:
+            from ltlib import fastq_to_dataframe, save_tsv
+            rows = fastq_to_dataframe(input[0], params.sample)
+            save_tsv(rows, output.queries)
+
+elif FASTQ_R1 and FASTQ_R2:
+    # ── Single-cell mode (paired FASTQ) ──
+    rule convert_sc_fastq:
+        input:
+            r1=FASTQ_R1,
+            r2=FASTQ_R2,
+        output:
+            queries=os.path.join(OUTDIR, f"{SAMPLE}_queries.tsv"),
+        params:
+            sample=SAMPLE,
+        run:
+            from ltlib import parse_10x_fastq, filter_sc_cbs_and_umis, save_tsv
+            parsed = parse_10x_fastq(input.r1, input.r2)
+            masks = filter_sc_cbs_and_umis(
+                parsed["CB"], parsed["read_CB"],
+                parsed["UMI"], parsed["read_UMI"],
+                parsed["QC"],
+            )
+            valid = masks["valid_provenance_structure"]
+            rows = []
+            for i, idx in enumerate(valid):
+                seq = parsed["SEQ"][parsed["read_SEQ"][idx]]
+                cb = parsed["CB"][parsed["read_CB"][idx]]
+                umi = parsed["UMI"][parsed["read_UMI"][idx]]
+                rows.append({
+                    "readName": f"{params.sample}_sc{i+1}",
+                    "cellBC": cb,
+                    "UMI": umi,
+                    "readCount": 1,
+                    "seq": seq,
+                })
+            save_tsv(rows, output.queries)
+
+
+rule align:
+    input:
+        queries=os.path.join(OUTDIR, f"{SAMPLE}_queries.tsv"),
+        reference=REFERENCE,
+    output:
+        results=os.path.join(OUTDIR, f"{SAMPLE}_results.json"),
+    params:
+        threads=THREADS,
+        outdir=OUTDIR,
+        lineage=LINEAGE,
+    run:
+        from ltlib import (
+            read_reference_fasta, read_queries_tsv,
+            PipelineConfig, Pipeline,
+            save_alignment_results,
+        )
+        ref_seq = read_reference_fasta(input.reference)
+        queries = read_queries_tsv(input.queries)
+        config = PipelineConfig(
+            lineage_mode=params.lineage,
+            threads=params.threads,
+        )
+        pipeline = Pipeline(ref_seq, config)
+        result = pipeline.run(queries)
+        save_alignment_results(
+            [r.to_dict() for r in result.results],
+            output.results,
+            fmt="json",
+        )
+
+
+rule report:
+    input:
+        results=os.path.join(OUTDIR, f"{SAMPLE}_results.json"),
+        reference=REFERENCE,
+    output:
+        os.path.join(OUTDIR, f"{SAMPLE}_report.{'html' if REPORT == 'html' else 'json'}"),
+        os.path.join(OUTDIR, "Results.txt"),
+        os.path.join(OUTDIR, "Warnings.txt"),
+        os.path.join(OUTDIR, "AlleleAnnotations.txt"),
+    run:
+        import json
+        from ltlib import read_reference_fasta, generate_report, save_text_report
+        with open(input.results) as f:
+            results = json.load(f)
+        ref_seq = read_reference_fasta(input.reference)
+        generate_report(
+            results,
+            os.path.join(OUTDIR, f"{SAMPLE}_report"),
+            fmt=REPORT,
+            ref_seq=ref_seq,
+            ref_length=len(ref_seq),
+        )
+        save_text_report(results, OUTDIR, ref_seq=ref_seq)

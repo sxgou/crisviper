@@ -42,6 +42,50 @@ def build_gap_penalty_profile(
     return gap_open_profile, gap_extend_profile
 
 
+def build_homology_penalty_profile(
+    ref_seq: str,
+    homology_window: int = 8,
+    homology_penalty: float = 0.0,
+) -> np.ndarray:
+    """构建同源区域惩罚profile — 对参考序列中存在多拷贝的区域施加match_score打折。
+
+    homology_window: 检测同源性的滑动窗口大小（bp）。
+    homology_penalty: ≤0，同源位置match_score的额外惩罚值，0=关闭。
+
+    工作原理：
+      对参考序列的每个位置i，提取以其为中心的homology_window长度的子序列。
+      如果该子序列在参考序列的其他位置也存在，则位置i被标记为同源区域，
+      在此处进行match时额外施加homology_penalty惩罚，使DP更不倾向在此处匹配。
+
+    返回: 长度为len(ref_seq)的数组，每个元素≤0，homology_penalty=0时全0。
+    """
+    m = len(ref_seq)
+    profile = np.zeros(m, dtype=float)
+    if homology_penalty >= 0:
+        return profile
+    half_w = homology_window // 2
+    for i in range(m):
+        start = max(0, i - half_w)
+        end = min(m, i + half_w + 1)
+        fragment = ref_seq[start:end]
+        # Search for this fragment elsewhere in the ref
+        count = 0
+        p = 0
+        while True:
+            p = ref_seq.find(fragment, p)
+            if p < 0:
+                break
+            # Allow partial overlap at ends but not exact same position
+            if abs(p - start) >= min(3, homology_window // 2):
+                count += 1
+                if count > 0:
+                    break  # one non-self occurrence is enough
+            p += 1
+        if count > 0:
+            profile[i] = homology_penalty
+    return profile
+
+
 def lineage_tracer_align(
     ref_seq: str,
     query_seq: str,
@@ -60,6 +104,14 @@ def lineage_tracer_align(
     cutsite_mismatch_scale: float = 1.0,
     flank_mismatch_scale: float = 2.0,
     far_mismatch_scale: float = 3.0,
+    gap_exit_bonus: float = 0.0,
+    short_match_window: int = 0,
+    short_match_discount: float = 1.0,
+    dense_mismatch_window: int = 6,
+    dense_mismatch_penalty: float = 0.0,
+    homology_window: int = 8,
+    homology_penalty: float = 0.0,
+    isolated_base_penalty: float = 0.0,
 ) -> Tuple[float, str, str, Dict]:
     gap_open_profile, gap_extend_profile = build_gap_penalty_profile(
         ref_length=len(ref_seq), cutsites=cutsites,
@@ -83,10 +135,20 @@ def lineage_tracer_align(
     if no_gap_prefix > 0:
         gap_open_profile[:no_gap_prefix] = -1e6
         gap_extend_profile[:no_gap_prefix] = -1e6
+    homology_profile = build_homology_penalty_profile(
+        ref_seq, homology_window=homology_window, homology_penalty=homology_penalty)
     score, aligned_ref, aligned_query, stats = affine_gap_alignment_position_aware(
         ref_seq, query_seq, gap_open_profile, gap_extend_profile,
         match_score=match_score, mismatch_penalty=mismatch_penalty,
-        mismatch_penalty_profile=mismatch_profile)
+        mismatch_penalty_profile=mismatch_profile,
+        gap_exit_bonus=gap_exit_bonus,
+        short_match_window=short_match_window,
+        short_match_discount=short_match_discount,
+        dense_mismatch_window=dense_mismatch_window,
+        dense_mismatch_threshold=mismatch_density_threshold,
+        dense_mismatch_penalty=dense_mismatch_penalty,
+        homology_profile=homology_profile,
+        isolated_base_penalty=isolated_base_penalty)
     filtered_ref, filtered_query, n_corrected = filter_point_mutations(
         aligned_ref, aligned_query,
         cutsites, window=mutation_window)

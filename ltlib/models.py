@@ -42,6 +42,17 @@ class MutationEvent:
     raw_query_segment: str = ""          # 原始比对中 query 片段
     score: float = 0.0                   # 置信度分数
 
+    def to_dict(self) -> Dict:
+        return {
+            "type": self.type.value if hasattr(self.type, 'value') else str(self.type),
+            "ref_pos": self.ref_pos,
+            "ref_base": self.ref_base,
+            "query_base": self.query_base,
+            "length": self.length,
+            "in_cutsite_window": self.in_cutsite_window,
+            "score": self.score,
+        }
+
 
 # ═══════════════════════════════════════════════════════════════
 # 输入记录
@@ -160,6 +171,7 @@ class AlignmentResult:
                 "aligned_ref": None,
                 "aligned_query": None,
                 "stats": None,
+                "mutations": [],
             })
         else:
             base.update({
@@ -167,6 +179,7 @@ class AlignmentResult:
                 "aligned_ref": self.aligned_ref,
                 "aligned_query": self.aligned_query,
                 "stats": self.stats.to_dict(),
+                "mutations": [m.to_dict() for m in self.mutations],
             })
         return base
 
@@ -197,6 +210,39 @@ class PipelineConfig:
     mismatch_density_threshold: float = 0.34
     mutation_window: int = 3
 
+    # ── Gap合并控制 ──
+    # gap_exit_bonus: 退出gap进入match的惩罚（≤0，0=关闭）
+    # 负值使DP倾向将孤立匹配吸收到gap中，gap_exit_bonus=-1.0 是推荐值
+    gap_exit_bonus: float = 0.0
+
+    # ── 短匹配区域折扣 ──
+    # short_match_window: 短匹配区域阈值（bp），0=关闭
+    # short_match_discount: 短匹配区域match_score折扣系数（0~1），1.0=不打折
+    # 例如 window=3, discount=0.5 时，≤3bp的匹配区域match_score减半
+    short_match_window: int = 0
+    short_match_discount: float = 1.0
+
+    # ── 密集错配区域惩罚 ──
+    # dense_mismatch_window: 密集错配检测窗口大小（bp）
+    # dense_mismatch_penalty: 密集错配区域额外惩罚（≤0，0=关闭）
+    # 负值使DP在密集错配区域倾向选择insertion路径
+    dense_mismatch_window: int = 6
+    dense_mismatch_penalty: float = 0.0
+
+    # ── 同源区域重复惩罚（跨靶点homology保护） ──
+    # homology_window: 同源性检测窗口大小（bp）
+    # homology_penalty: ≤0，同源区域match_score减分，0=关闭
+    # 负值使DP在参考序列的重复区域不倾向匹配，减少跨靶点错配
+    homology_window: int = 8
+    homology_penalty: float = 0.0
+
+    # ── 孤立碱基端点和并惩罚（吸收孤立匹配到gap端点） ──
+    # 孤立匹配：前后被gap包围的单个碱基匹配
+    # 负值使DP倾向将孤立匹配吸收到gap中，减少碎片化比对
+    # 与 gap_exit_bonus 协同：gap_exit_bonus 惩罚gap→M的过渡，
+    # isolated_base_penalty 惩罚过渡后只有1bp匹配的场景
+    isolated_base_penalty: float = 0.0
+
     # ── 引物参数 ──
     primer5_len: int = 23
     primer3_len: int = 33
@@ -215,6 +261,24 @@ class PipelineConfig:
         "remove_isolated_matches",
         "filter_point_mutations",
     ])
+
+    # ── 重复序列矫正配置 ──
+    # "auto": 从reference动态检测重复序列
+    # "hardcoded": 使用硬编码的重复序列列表（向后兼容）
+    # "off": 跳过重复序列矫正
+    repeat_correction_mode: str = "auto"
+
+    # ── 小片段跨靶点矫正 ──
+    enable_target_misalignment_correction: bool = True
+
+    # ── 孤立匹配清除 ──
+    enable_isolated_match_removal: bool = True
+
+    # ── 密集错配矫正（后处理） ──
+    enable_dense_mismatch_correction: bool = True
+
+    # ── 点突变过滤（后处理） ──
+    enable_point_mutation_filtering: bool = True
 
     # ── 多线程 ──
     threads: Optional[int] = None

@@ -12,9 +12,16 @@
 每个步骤可独立测试、替换、跳过。
 """
 
+import os
+# 防止 fork + NumPy 线程冲突（在 import numpy 之前必须设置）
+os.environ.setdefault('OMP_NUM_THREADS', '1')
+os.environ.setdefault('MKL_NUM_THREADS', '1')
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+
 import sys
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from functools import partial
 from typing import List, Dict, Optional, Tuple, Callable
 
@@ -163,6 +170,7 @@ def apply_corrections_pipeline(
     mismatch_density_threshold: float = 0.34,
     mutation_window: int = 3,
     config: Optional[AmpliconConfig] = None,
+    repeat_correction_mode: str = "auto",
 ) -> Tuple[str, str]:
     """应用矫正函数管线
 
@@ -184,7 +192,9 @@ def apply_corrections_pipeline(
                     threshold=mismatch_density_threshold,
                 )
             elif fn_name == "correct_repetitive_misalignment":
-                ar, aq, _ = correct_repetitive_misalignment(ar, aq, ref_seq)
+                # "hardcoded" mode: don't pass ref_seq → uses _HARDCODED_REPEATS_CONFIG
+                rep_ref = ref_seq if repeat_correction_mode == "auto" else None
+                ar, aq, _ = correct_repetitive_misalignment(ar, aq, rep_ref)
             elif fn_name == "correct_target_misalignments":
                 if config is not None:
                     cs_start = len(config.prefix) + 1 * config.period + config.cutsite_offset - 1
@@ -240,6 +250,37 @@ def check_allele_confidence(
 # ═══════════════════════════════════════════════════════════════
 # 步骤3: 单序列比对（完整的 align_single 逻辑）
 # ═══════════════════════════════════════════════════════════════
+
+def _build_correction_list(config: PipelineConfig, lineage_mode: bool = False) -> List[str]:
+    """根据配置动态构建矫正函数列表"""
+    # 从 toggle 标记决定哪些矫正启用
+    enabled = {}
+    # 密集错配矫正
+    enabled["convert_dense_mismatch_to_indel"] = config.enable_dense_mismatch_correction
+    # 重复序列矫正
+    if config.repeat_correction_mode == "off":
+        enabled["correct_repetitive_misalignment"] = False
+    else:
+        enabled["correct_repetitive_misalignment"] = True
+    # 小片段跨靶点矫正
+    enabled["correct_target_misalignments"] = config.enable_target_misalignment_correction
+    # 孤立匹配清除
+    enabled["remove_isolated_matches"] = config.enable_isolated_match_removal
+    # 点突变过滤
+    enabled["filter_point_mutations"] = config.enable_point_mutation_filtering
+
+    result = []
+    for fn_name in config.corrections:
+        if enabled.get(fn_name, True):
+            result.append(fn_name)
+
+    # 谱系模式：跳过 end-to-end 密集错配矫正和点突变过滤
+    # （这些在 lineage_tracer_align 内部已处理）
+    if lineage_mode:
+        result = [c for c in result
+                  if c not in ("convert_dense_mismatch_to_indel", "filter_point_mutations")]
+    return result
+
 
 def align_single(
     query: QueryRecord,
@@ -298,16 +339,14 @@ def align_single(
         return AlignmentResult.error_result(query, "无法从全长比对中提取内部区域")
 
     # ── 步骤4: 矫正管线 ──
-    corrections_to_apply = config.corrections[:]
-    if config.lineage_mode and cutsites:
-        corrections_to_apply = [c for c in corrections_to_apply
-                                if c not in ("convert_dense_mismatch_to_indel", "filter_point_mutations")]
+    corrections_to_apply = _build_correction_list(config, lineage_mode=(config.lineage_mode and cutsites is not None))
     ar_int_corrected, aq_int_corrected = apply_corrections_pipeline(
         ar_int, aq_int, int_r, int_r,
         correction_list=corrections_to_apply,
         cutsites=cutsites,
         mismatch_density_threshold=config.mismatch_density_threshold,
         mutation_window=config.mutation_window,
+        repeat_correction_mode=config.repeat_correction_mode,
     )
     if ar_int_corrected != ar_int or aq_int_corrected != aq_int:
         ar_int, aq_int = ar_int_corrected, aq_int_corrected
@@ -383,6 +422,14 @@ def _align_full_lineage(
         flank_width=config.flank_width,
         mismatch_density_threshold=config.mismatch_density_threshold,
         mutation_window=config.mutation_window,
+        gap_exit_bonus=config.gap_exit_bonus,
+        short_match_window=config.short_match_window,
+        short_match_discount=config.short_match_discount,
+        dense_mismatch_window=config.dense_mismatch_window,
+        dense_mismatch_penalty=config.dense_mismatch_penalty,
+        homology_window=config.homology_window,
+        homology_penalty=config.homology_penalty,
+        isolated_base_penalty=config.isolated_base_penalty,
     )
     return score, ar, aq, raw_stats
 
@@ -409,6 +456,9 @@ def _align_full_standard(
         mismatch_penalty=config.mismatch_penalty,
         gap_open=config.gap_open,
         gap_extend=config.gap_extend,
+        gap_exit_bonus=config.gap_exit_bonus,
+        short_match_window=config.short_match_window,
+        short_match_discount=config.short_match_discount,
     )
     return score, ar, aq, raw_stats
 
@@ -698,22 +748,29 @@ class Pipeline:
 
         # 并行执行
         threads = self.config.threads or mp.cpu_count()
-        threads = min(threads, total)
+        threads = min(threads, total, 12)  # 上限12线程防止系统过载
         results = []
 
         if threads > 1:
-            with ProcessPoolExecutor(max_workers=threads) as executor:
-                chunk_func = partial(
-                    _process_chunk,
-                    ref_seq=self.ref_seq,
-                    config=self.config,
-                    cutsites=self.cutsites,
-                )
-                futures = {executor.submit(chunk_func, ch): ch for ch in chunks}
-                for future in as_completed(futures):
-                    results.extend(future.result())
-        else:
-            # 单线程
+            try:
+                with ProcessPoolExecutor(max_workers=threads) as executor:
+                    chunk_func = partial(
+                        _process_chunk,
+                        ref_seq=self.ref_seq,
+                        config=self.config,
+                        cutsites=self.cutsites,
+                    )
+                    futures = {executor.submit(chunk_func, ch): ch for ch in chunks}
+                    for future in as_completed(futures):
+                        try:
+                            results.extend(future.result())
+                        except Exception as e:
+                            log.error("  批次处理失败 (跳过): %s", e)
+            except BrokenProcessPool:
+                log.warning("ProcessPoolExecutor 崩溃 (BrokenProcessPool)，回退到单线程处理")
+        if not results:
+            # ProcessPoolExecutor 失败或 threads <= 1
+            log.info("  使用单线程处理 %d 条序列...", total)
             for chunk in chunks:
                 results.extend(_process_chunk(chunk, self.ref_seq, self.config, self.cutsites))
 

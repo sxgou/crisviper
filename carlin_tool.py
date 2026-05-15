@@ -25,6 +25,11 @@ CARLIN序列分析命令行工具
 import argparse
 import sys
 import os
+# 防止 fork + NumPy 线程冲突（在 import ltlib 之前设置）
+os.environ.setdefault('OMP_NUM_THREADS', '1')
+os.environ.setdefault('MKL_NUM_THREADS', '1')
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+
 import multiprocessing as mp
 from typing import List, Dict
 
@@ -117,6 +122,35 @@ def main():
     align_parser.add_argument("--density-threshold", type=float, default=0.34)
     align_parser.add_argument("--cutsites", default=None,
                               help="cutsite位置配置文件（JSON格式）")
+    # 矫正管线控制
+    align_parser.add_argument("--repeat-correction-mode", choices=["auto", "hardcoded", "off"],
+                              default="auto",
+                              help="重复序列矫正模式: auto=动态检测, hardcoded=硬编码列表, off=关闭")
+    align_parser.add_argument("--disable-target-misalignment", action="store_true",
+                              help="关闭小片段跨靶点矫正")
+    align_parser.add_argument("--disable-isolated-match-removal", action="store_true",
+                              help="关闭孤立匹配清除")
+    align_parser.add_argument("--disable-dense-mismatch-correction", action="store_true",
+                              help="关闭后处理密集错配矫正")
+    align_parser.add_argument("--disable-point-mutation-filtering", action="store_true",
+                              help="关闭点突变过滤")
+
+    align_parser.add_argument("--gap-exit-bonus", type=float, default=0.0,
+                              help="退出gap进入match的额外惩罚（≤0，负值使DP倾向合并gap，推荐-1.0）")
+    align_parser.add_argument("--short-match-window", type=int, default=0,
+                              help="短匹配区域阈值（bp，0=关闭，推荐3~5）")
+    align_parser.add_argument("--short-match-discount", type=float, default=1.0,
+                              help="短匹配区域match_score折扣系数（0~1，1.0=不打折，推荐0.5）")
+    align_parser.add_argument("--dense-mismatch-window", type=int, default=6,
+                              help="密集错配检测窗口大小（bp）")
+    align_parser.add_argument("--dense-mismatch-penalty", type=float, default=0.0,
+                              help="密集错配区域额外惩罚（≤0，0=关闭，推荐-2.0）")
+    align_parser.add_argument("--homology-window", type=int, default=8,
+                              help="同源区域检测窗口大小（bp）")
+    align_parser.add_argument("--homology-penalty", type=float, default=0.0,
+                              help="同源区域match_score惩罚（≤0，0=关闭，推荐-1.0）")
+    align_parser.add_argument("--isolated-base-penalty", type=float, default=0.0,
+                              help="孤立碱基匹配额外惩罚（≤0，0=关闭，推荐-2.0），吸收孤立匹配到gap端点")
 
     # 并行参数
     align_parser.add_argument("--threads", "-t", type=int, default=None)
@@ -188,7 +222,6 @@ def main():
             mismatch_penalty=args.mismatch_penalty,
             gap_open=args.gap_open,
             gap_extend=args.gap_extend,
-            semi_global=not args.use_global,
             lineage_mode=args.lineage,
             cutsite_gap_scale=args.cutsite_scale,
             flank_gap_scale=args.flank_scale,
@@ -200,6 +233,20 @@ def main():
             primer3_len=args.primer3_len,
             primer5_threshold=args.primer5_threshold,
             primer3_threshold=args.primer3_threshold,
+            gap_exit_bonus=args.gap_exit_bonus,
+            short_match_window=args.short_match_window,
+            short_match_discount=args.short_match_discount,
+            dense_mismatch_window=args.dense_mismatch_window,
+            dense_mismatch_penalty=args.dense_mismatch_penalty,
+            homology_window=args.homology_window,
+            homology_penalty=args.homology_penalty,
+            isolated_base_penalty=args.isolated_base_penalty,
+            # 矫正管线控制
+            repeat_correction_mode=args.repeat_correction_mode,
+            enable_target_misalignment_correction=not args.disable_target_misalignment,
+            enable_isolated_match_removal=not args.disable_isolated_match_removal,
+            enable_dense_mismatch_correction=not args.disable_dense_mismatch_correction,
+            enable_point_mutation_filtering=not args.disable_point_mutation_filtering,
             # 智能过滤（min-reads=1时启用智能过滤，>1时用阈值过滤）
             min_reads_snv=args.min_reads if args.min_reads > 1 else 10,
             min_reads_indel=args.min_reads if args.min_reads > 1 else 3,

@@ -254,7 +254,8 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
                 "mismatches": r["stats"]["mismatches"],
                 "gaps_in_ref": r["stats"]["gaps_in_ref"],
                 "gaps_in_query": r["stats"]["gaps_in_query"],
-                "similarity": r["stats"]["similarity"]
+                "similarity": r["stats"]["similarity"],
+                "mutations": r.get("mutations", []),
             }
             for r in mutated_seqs
         ]
@@ -319,8 +320,33 @@ def _save_report_html(report: dict, output_path: str, charts: dict = None,
         )
 
     # 详细序列表格
+    MUT_CLASSES = {"deletion": "mut-del", "insertion": "mut-ins", "substitution": "mut-sub"}
+
+    def _mut_summary(muts):
+        parts = []
+        for m in muts:
+            typ = m.get("type", "")
+            pos = m.get("ref_pos", -1) + 1
+            if typ == "deletion":
+                label = f"Δ{pos}-{m.get('length',1)}bp"
+                cls = "mut-tag mut-tag-del"
+            elif typ == "insertion":
+                label = f"ins@{pos}+{m.get('query_base','')}"
+                cls = "mut-tag mut-tag-ins"
+            elif typ == "substitution":
+                label = f"{m.get('ref_base','?')}{pos}{m.get('query_base','?')}"
+                cls = "mut-tag mut-tag-sub"
+            else:
+                label = str(typ)
+                cls = "mut-tag"
+            parts.append(f'<span class="{cls}">{label}</span>')
+        return " ".join(parts)
+
     detail_rows = ""
     for i, d in enumerate(detail[:100]):
+        muts = d.get("mutations", [])
+        mut_summary = _mut_summary(muts)
+        mut_html = f'<span class="mut-summary">{mut_summary}</span>' if mut_summary else '<span style="color:#999;">-</span>'
         detail_rows += (
             f"<tr>"
             f"<td>{i+1}</td>"
@@ -330,10 +356,11 @@ def _save_report_html(report: dict, output_path: str, charts: dict = None,
             f"<td>{d['gaps_in_ref']}</td>"
             f"<td>{d['gaps_in_query']}</td>"
             f"<td>{d['similarity']}</td>"
+            f"<td>{mut_html}</td>"
             f"</tr>\n"
         )
     if len(detail) > 100:
-        detail_rows += f"<tr><td colspan='7' style='text-align:center;color:#888;'>... 还有 {len(detail)-100} 条突变序列未显示</td></tr>\n"
+        detail_rows += f"<tr><td colspan='8' style='text-align:center;color:#888;'>... 还有 {len(detail)-100} 条突变序列未显示</td></tr>\n"
 
     # 图表嵌入
     def _img_html(key):
@@ -417,6 +444,11 @@ table{{width:100%;border-collapse:collapse;background:var(--card);border-radius:
 th{{background:var(--pri);color:#fff;padding:8px 10px;text-align:left;font-weight:600;}}
 td{{padding:6px 10px;border-bottom:1px solid #f1f5f9;}}
 tr:hover td{{background:#f8fafc;}}
+.mut-summary{{font-size:11px;color:var(--txt);white-space:normal;word-break:break-all;}}
+.mut-tag{{display:inline-block;padding:0 4px;border-radius:3px;font-size:10px;font-weight:600;margin:1px;}}
+.mut-tag-del{{background:#fee2e2;color:#dc2626;}}
+.mut-tag-ins{{background:#dbeafe;color:#2563eb;}}
+.mut-tag-sub{{background:#fef3c7;color:#d97706;}}
 .section{{background:var(--card);border-radius:6px;padding:16px;
   box-shadow:0 1px 3px rgba(0,0,0,.06);margin:12px 0;}}
 .stat-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;}}
@@ -527,7 +559,7 @@ footer{{margin-top:30px;padding-top:10px;border-top:1px solid var(--bdr);
 
 <h2 id="details">Mutated Sequence Details (Top 100)</h2>
 <table>
-<tr><th>#</th><th>Name</th><th>Reads</th><th>Mismatches</th><th>Insertions</th><th>Deletions</th><th>Similarity</th></tr>
+<tr><th>#</th><th>Name</th><th>Reads</th><th>Mismatches</th><th>Insertions</th><th>Deletions</th><th>Similarity</th><th>Mutations</th></tr>
 {detail_rows}
 </table>
 

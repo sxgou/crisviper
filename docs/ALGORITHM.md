@@ -558,6 +558,163 @@ DP比对原始输出
 
 谱系示踪算法增加约10-15%的运行时间，主要来自后处理步骤。
 
+---
+
+# 第四部分：向量化DP优化与原生特征
+
+## NumPy向量化DP递推
+
+### 动机
+
+标准的纯Python DP三重循环逐单元格递推在序列长度较小时尚可接受，但对于332bp×332bp的全长比对，每个单元格都需要计算M、Ix、Iy三个状态，总计算量为 $O(3 \times m \times n)$。在Python层面循环带来了显著的开销。
+
+### 优化策略
+
+利用NumPy的向量化操作，将DP递推中的**行内操作**批量计算：
+
+#### 1. 评分矩阵预计算
+
+```python
+def _build_score_matrix(ref_seq, query_seq, config):
+    # m×n 布尔矩阵: ref[i] == query[j]
+    match_mat = np.array(ref_arr)[:, None] == np.array(query_arr)[None, :]
+    # 基础得分矩阵
+    score_mat = np.where(match_mat, match_score, mismatch_penalty)
+    # 向量化应用额外惩罚
+    # - short_match_discount: 短匹配区域打折
+    # - homology_penalty: 同源区域降低
+    # - isolated_base_penalty: 孤立碱基惩罚
+    # 所有操作均为NumPy向量化, O(m×n)
+    return score_mat
+```
+
+#### 2. Iy按行向量化
+
+```python
+# 每一行 i, Iy[i, j] 仅依赖 M[i-1,j], Ix[i-1,j], Iy[i-1,j]
+# 可对整个 j 维度批量计算:
+Iyi[1:] = np.maximum(np.maximum(Mi_1[1:] + go_ge_i, Ixi_1[1:] + go_ge_i), Iyi_1[1:] + ge_i)
+```
+
+#### 3. M按行向量化
+
+```python
+prev_best = np.maximum(Mi_1[:n], np.maximum(Ixi_1[:n], Iyi_1[:n]))
+Mi[1:] = s_row + prev_best[:n]
+```
+
+#### 4. Ix保持顺序扫描
+
+Ix[i,j] 依赖同一行的 Ix[i,j-1]，存在数据依赖无法向量化。但由于 n ≤ 332（参考序列长度），Ix的纯Python循环开销可忽略。
+
+### 密集错配密度计算的优化
+
+#### 问题
+
+谱系示踪比对的dense_mismatch_penalty需要计算每个单元格周围窗口内的mismatch密度。原始实现为三重Python循环：
+
+```python
+# O(m × n × window) — 原始实现
+for i in range(m):
+    for j in range(n):
+        density = 0
+        for d in range(-window, window+1):
+            # 沿对角线方向检查
+            ...
+```
+
+对于332bp×332bp，window=6，这需要 ~332×332×13 ≈ 1.4M 次Python循环检查。
+
+#### 优化：cumsum沿对角线
+
+利用mismatch矩阵沿对角线方向的累积和（cumsum）计算密度：
+
+```python
+def _compute_dense_mismatch_density(mismatch, window=6):
+    # 1. 构建对角线索引矩阵
+    diag_idx = np.arange(m)[:, None] - np.arange(n)[None, :]
+    # 2. 沿每条对角线排序并计算cumsum
+    # 3. 用滑动窗口差值计算窗口内密度
+    # 结果: O(m×n) 纯NumPy操作
+```
+
+该优化将密度计算从 $O(m \times n \times w)$ 降低到 $O(m \times n)$，消除了最内层的Python循环。
+
+## DP原生特征
+
+谱系示踪比对在DP递推过程中直接嵌入以下特征，无需后处理即可获得更高质量的结果：
+
+### 1. Gap Exit Bonus
+
+**原理**：当DP从gap状态（Ix或Iy）转换到匹配状态（M）时，附加一个额外奖励（负值惩罚）。这使得算法在gap端点处倾向"黏合"——将小的match片段吸收到相邻的gap中，减少indel碎片化。
+
+**数学形式**：
+$$
+M(i,j) = s(x_i, y_j) + \max\begin{cases}
+M(i-1, j-1) \\
+I_x(i-1, j-1) + \text{gap\_exit\_bonus} \\
+I_y(i-1, j-1) + \text{gap\_exit\_bonus}
+\end{cases}
+$$
+
+**效果**：gap_exit_bonus=-1.0时，每个gap→match的转换额外-1分，等价于将短match片段"推入"gap。
+
+### 2. Short Match Discount
+
+**原理**：对短匹配区域（≤short_match_window bp）降低match_score。短匹配区域可能代表假阳性匹配（如重复序列间的偶然匹配）。
+
+**数学形式**：
+$$
+s(x_i, y_j) = 
+\begin{cases}
+\text{match\_score} \times \text{short\_match\_discount} & \text{if match and in short region} \\
+\text{match\_score} & \text{otherwise}
+\end{cases}
+$$
+
+**实现**：通过`_compute_run_len()`函数预先计算每个单元格所属的最长后缀匹配长度，短于阈值的区域apply折扣。
+
+### 3. Dense Mismatch Penalty
+
+**原理**：在密集错配区域（滑动窗口内mismatch密度高）对match_score施加额外惩罚。生物学上，连续密集错配更可能是indel而非独立点突变。
+
+**实现**：
+```python
+# 在评分矩阵构建阶段
+density = _compute_dense_mismatch_density(mismatch_mat, window)
+penalty = np.where(density > threshold, dense_mismatch_penalty, 0)
+score_mat += penalty  # 直接在得分矩阵中加入惩罚
+```
+
+### 4. Homology Penalty
+
+**原理**：在同源区域（窗口内序列高度相似）降低match_score。同源区域中偶然匹配的概率高，降低match_score可抑制DP向重复区域错误聚集。
+
+**实现**：对参考序列的每个位置计算其与周围序列的相似度，高相似度区域应用惩罚。
+```python
+# O(8×m) 预处理
+for k in range(1, homology_window+1):
+    if pos + k < m:  # 向右比较
+        matches += int(ref_seq[pos] == ref_seq[pos+k])
+```
+
+### 5. Isolated Base Penalty
+
+**原理**：对孤立匹配碱基（两侧相邻列为gap的match）附加惩罚。这种孤立匹配会将一个连续deletion块分割为两个独立deletion，不符合生物学的连续缺失模型。
+
+**实现**：在回溯后的aligned sequence中识别孤立匹配，在重计分阶段应用额外惩罚。也可以在评分矩阵中通过`_compute_run_len()`的运行长度为1的位置应用惩罚。
+
+## 向量化加速效果
+
+| 维度 | 优化前 | 优化后 | 加速比 |
+|------|--------|--------|--------|
+| 单序列比对（全部特性） | 1.60s | 0.37s | 4.3x |
+| 单序列比对（最小特性） | 0.33s | 0.09s | 3.6x |
+| 批处理500条（12线程） | 34s | 19s | 1.8x |
+| 全量23,430条（12线程） | ~38min | ~15min | 2.5x |
+
+> 注：批处理加速比低于单序列由于多进程通信开销、负载不均、NumPy线程安全限制等因素。
+
 ## 参考文献
 
 1. Gotoh, O. (1982). An improved algorithm for matching biological sequences. *Journal of Molecular Biology*, 162(3), 705-708.
