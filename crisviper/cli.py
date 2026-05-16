@@ -87,9 +87,6 @@ def main():
     align_parser.add_argument("--mismatch-penalty", type=float, default=-3.0)
     align_parser.add_argument("--gap-open", type=float, default=-2.0)
     align_parser.add_argument("--gap-extend", type=float, default=-0.1)
-    align_parser.add_argument("--global", action="store_true", dest="use_global",
-                              help="使用全局比对（默认使用半全局比对）")
-
     # 谱系示踪模式
     align_parser.add_argument("--lineage", action="store_true",
                               help="启用谱系示踪比对模式")
@@ -224,7 +221,6 @@ def main():
         )
 
         # 显示配置信息
-        align_type = "全局" if args.use_global else "半全局"
         radius_info = "auto" if args.gradient_radius is None else f"{args.gradient_radius}bp"
         log.info("  梯度惩罚参数: min_scale=%s, max_scale=%s, edge_scale=%s, radius=%s",
                  args.min_scale, args.max_scale, args.cutsite_edge_scale, radius_info)
@@ -233,10 +229,9 @@ def main():
                      args.mutation_window, args.density_threshold)
 
         if args.threads > 1:
-            log.info("开始并行批量比对（%s，%d 线程）...", align_type, args.threads)
+            log.info("开始并行批量比对（全局，%d 线程）...", args.threads)
         else:
-            log.info("开始批量比对（%s，单线程）...", align_type)
-
+            log.info("开始批量比对（全局，单线程）...")
         # ── 运行管道 ──
         pipeline = Pipeline(config=config, ref_seq=ref_seq)
         pipeline_result = pipeline.run(query_records)

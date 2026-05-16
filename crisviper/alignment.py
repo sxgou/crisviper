@@ -231,10 +231,10 @@ def affine_gap_alignment(ref_seq: str, query_seq: str,
                 a, b, c = Mi_1[j] + go_ge, Ixi_1[j] + go_ge, Iyi_1[j] + gap_extend
                 Iyi[j] = a if a >= b and a >= c else (b if b >= c else c)
 
-    max_score = max(M[m, n], Ix[m, n], Iy[m, n])
-    max_state = 'M' if M[m, n] >= max(Ix[m, n], Iy[m, n]) else \
-                ('Ix' if Ix[m, n] >= Iy[m, n] else 'Iy')
-    i, j, state = m, n, max_state
+    # Global alignment: only M[m, n] is valid at termination
+    max_score = M[m, n]
+    state = 'M'
+    i, j = m, n
     aligned_ref, aligned_query = [], []
     while i > 0 and j > 0:
         if state == 'M':
@@ -382,10 +382,10 @@ def affine_gap_alignment_position_aware(
                 Ixi[j] = _a if _a >= _b and _a >= _c else (_b if _b >= _c else _c)
 
     # ── Backtrace ──
-    max_score = max(M[m, n], Ix[m, n], Iy[m, n])
-    max_state = 'M' if M[m, n] >= max(Ix[m, n], Iy[m, n]) else \
-                ('Ix' if Ix[m, n] >= Iy[m, n] else 'Iy')
-    i, j, state = m, n, max_state
+    # Global alignment: only M[m, n] is valid at termination
+    max_score = M[m, n]
+    state = 'M'
+    i, j = m, n
     aligned_ref, aligned_query = [], []
     while i > 0 and j > 0:
         if state == 'M':
