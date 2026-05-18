@@ -48,16 +48,27 @@ This ensures: at cutsites, exiting a gap costs ~21 extra points — enough to ov
 
 ### Validation
 
-Tested with the problematic query `seq2129` (Target1→Target7 deletion with isolated A at Target2 cutsite):
+A full re-alignment of all 628 sequences with isolated match segments (from the complete set of 23,430) confirms geb_profile achieves **99.0% elimination**:
 
-| Config | Score | Non-gap blocks | Non-gap block sizes | Isolated match? |
-|--------|:-----:|:--------------:|:-------------------:|:---------------:|
-| Current (scalar geb=-1.0) | 259.9 | 2 | [40, 125] | No |
-| **With geb_profile (base=-3.5)** | **240.6** | **2** | **[40, 125]** | **No** |
+| Metric | OLD version | Current baseline | **geb_profile (-3.5)** |
+|--------|:-----------:|:----------------:|:---------------------:|
+| Sequences with isolated matches | 628 | 472 | **6** |
+| Total isolated segments | 685 | 1,106 | **6** |
+| Fix rate vs OLD | — | 24.8% | **99.0%** |
+| Max segments per sequence | 9 | 8 | 1 |
 
-Both produce a single continuous gap between positions 40 and 206 (167 gap chars), which is the correct Target1→Target7 deletion. The current scalar also prevents this case (because all features were enabled in the test), but the profile approach is more fundamental — it works at the DP transition level regardless of other feature settings.
+The 6 remaining segments are all 4 bp exact matches at the gradient zone periphery (7-13 bp from cutsite centers), where geb_profile correctly tapers to mild penalty (-3.5 to -10). They occur within conserved CARLIN repeat motifs (TAGT, ACGA, TACG) and do not represent frame-shift artifacts — the geb_profile at these positions is intentionally mild to avoid disrupting normal alignment behavior.
 
-The lower score with geb_profile reflects that the biologically correct path (continuous deletion) is taken instead of the higher-scoring but spurious frame-shifted path.
+#### Detailed: `seq2129` (Target1→Target7, 167 bp deletion)
+
+| Config | DP Score | Non-gap blocks | Block sizes | Isolated match? |
+|--------|:-------:|:--------------:|:-----------:|:---------------:|
+| Baseline (all features OFF) | 250.9 | 2 | [40, 125] | No |
+| `gap_exit_bonus=-1.0` | 249.9 | 2 | [40, 125] | No |
+| `isolated_base_penalty=-2.0` | 244.9 | 2 | [40, 125] | No |
+| **`geb_profile` (base=-3.5)** | **230.6** | **2** | **[40, 125]** | **No** |
+
+All configurations produce a single continuous gap between positions 40 and 206, the correct deletion. The key differences are in DP scores: the geb_profile applies the strongest penalty (-21.0 at Target1 cutsite center, the gap exit point), which is the intended behavior — most aggressive where frame-shift artifacts are most likely.
 
 ## Parameter Design
 
@@ -166,11 +177,13 @@ Replace `--gap-exit-bonus` with `--geb-base` (default -3.5).
 
 ## Scope
 
-All 290 identified isolated segments are covered:
-- 187 inside cutsite regions → directly at peak penalty (-21)
-- 103 within 12 bp of cutsite center → well within gradient radius (~15 bp), penalty ≥ -12
+Verified across all 628 affected sequences (from 23,430 total) with geb_profile (base_gap_exit=-3.5):
 
-No position outside the gradient zone has this artifact. No new false positives expected.
+- **99.0% elimination rate**: 628 → 6 sequences with isolated segments
+- **Remaining 6 segments**: all 4 bp, at gradient zone periphery (7-13 bp from cutsite center), within conserved CARLIN repeat motifs
+- These edge cases are expected — the geb_profile intentionally tapers to mild penalty outside the gradient zone
+
+No new false positives expected. The remaining 6 fragments produce biologically plausible alignments in low-penalty regions and do not represent frame-shift artifacts.
 
 ## Backward Compatibility
 

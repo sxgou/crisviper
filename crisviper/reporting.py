@@ -164,8 +164,10 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
     deletion_and_substitution = {"sequences": 0, "reads": 0}
     all_three = {"sequences": 0, "reads": 0}
 
-    ins_lengths = []     # 插入长度列表
-    del_lengths = []     # 删除长度列表
+    ins_lengths = []     # 插入长度列表（每条序列一次）
+    del_lengths = []     # 删除长度列表（每条序列一次）
+    ins_length_reads = Counter()   # 插入长度 → Reads数
+    del_length_reads = Counter()   # 删除长度 → Reads数
     total_mismatches = 0
 
     for r in mutated_seqs:
@@ -197,13 +199,15 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
             all_three["sequences"] += 1
             all_three["reads"] += rc
 
-        # 收集插入长度
+        # 收集插入长度（序列级 + Reads加权）
         for block in stats.get("gap_blocks_ref", []):
             ins_lengths.append(block)
+            ins_length_reads[block] += rc
 
-        # 收集删除长度
+        # 收集删除长度（序列级 + Reads加权）
         for block in stats.get("gap_blocks_query", []):
             del_lengths.append(block)
+            del_length_reads[block] += rc
 
         total_mismatches += stats["mismatches"]
 
@@ -211,6 +215,14 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
     avg_deletion_len = sum(del_lengths) / len(del_lengths) if del_lengths else 0.0
     max_insertion_len = max(ins_lengths) if ins_lengths else 0
     max_deletion_len = max(del_lengths) if del_lengths else 0
+
+    # Reads加权的平均/最大长度
+    total_ins_reads = sum(ins_length_reads.values())
+    total_del_reads = sum(del_length_reads.values())
+    avg_ins_len_reads = (sum(k * v for k, v in ins_length_reads.items()) / total_ins_reads
+                         if total_ins_reads else 0.0)
+    avg_del_len_reads = (sum(k * v for k, v in del_length_reads.items()) / total_del_reads
+                         if total_del_reads else 0.0)
 
     # 构建报告字典
     report = {
@@ -246,6 +258,8 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
             "max_deletion_length": max_deletion_len,
             "all_insertion_lengths": ins_lengths,
             "all_deletion_lengths": del_lengths,
+            "all_insertion_lengths_reads": dict(ins_length_reads),
+            "all_deletion_lengths_reads": dict(del_length_reads),
         },
         "mutated_sequences_detail": [
             {
@@ -257,9 +271,43 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
                 "similarity": r["stats"]["similarity"],
                 "mutations": r.get("mutations", []),
             }
-            for r in mutated_seqs
+            for r in sorted(mutated_seqs, key=lambda x: -x.get("readCount", 1))
         ]
     }
+
+    # Per-target mutation stats
+    report["per_target"] = {}
+    if cutsites:
+        for cs in cutsites:
+            if not cs.name.startswith("Target"):
+                continue
+            covering = 0
+            mutated = 0
+            del_c = ins_c = sub_c = 0
+            for r in successful:
+                ar = r.get("aligned_ref", "")
+                if not ar:
+                    continue
+                ref_bases = sum(1 for c in ar if c != '-')
+                if ref_bases <= cs.start:
+                    continue
+                covering += 1
+                has_mut = False
+                for m in r.get("mutations", []):
+                    mp = m.get("ref_pos", -1)
+                    if cs.start - 3 <= mp <= cs.end + 3:
+                        has_mut = True
+                        mt = m.get("type", "")
+                        if mt == "deletion": del_c += 1
+                        elif mt == "insertion": ins_c += 1
+                        elif mt == "substitution": sub_c += 1
+                if has_mut:
+                    mutated += 1
+            rate = str(round(mutated/covering*100, 1)) if covering else "N/A"
+            report["per_target"][cs.name] = {
+                "total": covering, "mutated": mutated, "rate": rate,
+                "del": del_c, "ins": ins_c, "sub": sub_c,
+            }
 
     if fmt == "json":
         path = _ensure_extension(output_path, ".json")
@@ -372,46 +420,16 @@ def _save_report_html(report: dict, output_path: str, charts: dict = None,
 
     has_charts = bool(charts)
     chart_map = {k: _img_html(k) for k in [
-        'reads_dist', 'align_rate', 'length_dist',
+        'reads_length_dist', 'align_rate', 'length_dist',
         'mutation_seq_pie', 'mutation_reads_pie',
         'mutation_type', 'mutation_composition',
         'indel_length', 'indel_position', 'allele_heatmap',
+        'per_target_bar', 'segment_plot', 'cross_target_chord',
     ]}
+    per_target_exists = bool((charts or {}).get('per_target_bar'))
+    segment_exists = bool((charts or {}).get('segment_plot'))
+    chord_exists = bool((charts or {}).get('cross_target_chord'))
 
-    # ─── Cutsite ruler ───
-    ref_html = ""
-    cutsite_set = set()
-    if cutsites:
-        for cs in cutsites:
-            for p in range(cs.start, cs.end + 1):
-                cutsite_set.add(p)
-
-    if ref_seq:
-        ref_len = len(ref_seq)
-        ruler_cells = []
-        for i, base in enumerate(ref_seq):
-            in_cs = " rb-cutsite" if i in cutsite_set else ""
-            ruler_cells.append(f'<span class="rb rb-normal{in_cs}">{base}</span>')
-
-        tick_cells = []
-        for i in range(ref_len):
-            if i % 20 == 0:
-                tick_cells.append(f'<span class="rb" style="font-size:8px;color:#94a3b8;">{i}</span>')
-            else:
-                tick_cells.append('<span class="rb">&nbsp;</span>')
-
-        ref_html = f"""
-<div class="ruler-box">
-  <div class="ruler-row"><span class="ruler-label">Ref</span><span class="ruler-bases">{''.join(ruler_cells)}</span></div>
-  <div class="ruler-row"><span class="ruler-label" style="color:#94a3b8;">Pos</span><span class="ruler-bases">{''.join(tick_cells)}</span></div>
-</div>"""
-
-    # ─── Inline bar plots for length distributions ───
-    from collections import Counter
-    del_counter = Counter(ms.get("all_deletion_lengths", []))
-    ins_counter = Counter(ms.get("all_insertion_lengths", []))
-    del_bars = _html_bar_plot(del_counter, "Deletion Length Distribution", "#dc2626")
-    ins_bars = _html_bar_plot(ins_counter, "Insertion Length Distribution", "#2563eb")
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -457,23 +475,6 @@ tr:hover td{{background:#f8fafc;}}
 .stat-item .sv{{font-size:16px;font-weight:600;}}
 
 /* Ruler */
-.ruler-box{{background:#f1f5f9;border-radius:6px;padding:6px 10px;margin:10px 0;overflow-x:auto;}}
-.ruler-row{{display:flex;align-items:center;line-height:16px;white-space:nowrap;}}
-.ruler-label{{min-width:50px;font-size:9px;font-weight:700;color:#475569;flex-shrink:0;}}
-.ruler-bases{{display:flex;}}
-.rb{{width:12px;height:16px;text-align:center;font-size:9px;line-height:16px;flex-shrink:0;font-family:'Courier New',monospace;}}
-.rb-normal{{color:#94a3b8;}}
-.rb-cutsite{{background:#fee2e2;color:#dc2626;font-weight:700;border-radius:2px;}}
-
-/* Plot */
-.plot-box{{background:#fafbfc;padding:12px;border-radius:6px;margin:12px 0;border:1px solid var(--bdr);}}
-.plot-title{{font-size:13px;font-weight:600;margin-bottom:8px;color:#334155;}}
-.bar-wrap{{display:flex;align-items:flex-end;gap:1px;padding:0 2px;}}
-.bcol{{display:flex;flex-direction:column;align-items:center;flex:1;min-width:6px;max-width:18px;}}
-.bval{{font-size:7px;color:#555;height:12px;text-align:center;line-height:12px;}}
-.bbar{{width:100%;border-radius:1px 1px 0 0;}}
-.blab{{font-size:7px;color:#94a3b8;margin-top:1px;height:12px;text-align:center;line-height:12px;}}
-.x-axis{{text-align:center;color:#94a3b8;margin-top:4px;font-size:10px;}}
 
 /* Chart images */
 .chart-box{{background:var(--card);border-radius:6px;padding:12px;
@@ -500,8 +501,12 @@ footer{{margin-top:30px;padding-top:10px;border-top:1px solid var(--bdr);
 <nav class="sidebar">
   <h1>CrisViper</h1>
   <a href="#summary">Summary</a>
-  <a href="#reference">Reference</a>
-  <a href="#distributions">Length Distributions</a>
+  <a href="#indel-length">Indel Length</a>
+  <a href="#target-breakdown">Targets</a>
+  <a href="#per-target-chart">Per-Target Chart</a>
+  <a href="#segment-plot">Segment Plot</a>
+  <a href="#chord">Cross-Target Chord</a>
+  <a href="#heatmap">Allele Heatmap</a>
   <a href="#mutation-types">Mutation Types</a>
   <a href="#stats">Statistics</a>
   <a href="#details">Details</a>
@@ -521,16 +526,9 @@ footer{{margin-top:30px;padding-top:10px;border-top:1px solid var(--bdr);
 </div>
 
 {has_charts and '<h2>Charts Overview</h2>' or ''}
-{has_charts and f'''<div class="chart-row"><div class="chart-box">{chart_map["reads_dist"]}</div><div class="chart-box">{chart_map["align_rate"]}</div></div>''' or ''}
-{has_charts and f'''<div class="chart-box">{chart_map["length_dist"]}</div>''' or ''}
+{has_charts and f'''<div class="chart-row"><div class="chart-box">{chart_map["reads_length_dist"]}</div><div class="chart-box">{chart_map["align_rate"]}</div></div>''' or ''}
 
-<h2 id="reference">Reference Sequence &amp; Cutsites</h2>
-{ref_html or '<p style="color:#94a3b8;">Reference sequence not available.</p>'}
-
-<h2 id="distributions">Length Distributions</h2>
-<div class="plot-box">{del_bars}</div>
-<div class="plot-box">{ins_bars}</div>
-
+<h2 id="indel-length">Indel Length Distribution</h2>
 {has_charts and f'''<div class="chart-box">{chart_map["indel_length"]}</div>''' or ''}
 
 <h2 id="mutation-types">Mutation Type Distribution</h2>
@@ -553,14 +551,37 @@ footer{{margin-top:30px;padding-top:10px;border-top:1px solid var(--bdr);
   <div class="stat-item"><div class="sl">Max Deletion</div><div class="sv">{ms["max_deletion_length"]} bp</div></div>
 </div></div>
 
+<h2 id="target-breakdown">Target-specific Editing Efficiency</h2>
+<div class="section"><div class="stat-grid">
+  {report.get("per_target") and "".join(
+    f'<div class=stat-item>'
+    f'<div class=sl>{csname}</div>'
+    f'<div class=sv>{d["rate"]}%</div>'
+    f'<div style=font-size:10px;color:#94a3b8;>mutated {d["mutated"]}/{d["total"]} sequences</div></div>\n'
+    for csname, d in report.get("per_target", {}).items()
+  ) or '<p style=color:#94a3b8;>No cutsite data available.</p>'}
+</div></div>
+
 {has_charts and f'''<div class="chart-box">{chart_map["indel_position"]}</div>''' or ''}
 
-{has_charts and f'''<h2>Allele Heatmap</h2><div class="chart-box">{chart_map["allele_heatmap"]}</div>''' or ''}
+{per_target_exists and f'''<h2 id="per-target-chart">Per-Target Editing Type Distribution</h2>
+<div class="chart-box">{chart_map["per_target_bar"]}</div>''' or ''}
+
+{segment_exists and f'''<h2 id="segment-plot">Mutation Segment Plot</h2>
+<div class="chart-box">{chart_map["segment_plot"]}</div>''' or ''}
+
+{chord_exists and f'''<h2 id="chord">Cross-Target Deletion/Insertion Chord Diagram</h2>
+<div class="chart-box">{chart_map["cross_target_chord"]}</div>''' or ''}
+
+{has_charts and f'''<h2 id="heatmap">Allele Heatmap</h2>
+<div class="chart-box">{chart_map["allele_heatmap"]}</div>''' or ''}
 
 <h2 id="details">Mutated Sequence Details (Top 100)</h2>
-<table>
-<tr><th>#</th><th>Name</th><th>Reads</th><th>Mismatches</th><th>Insertions</th><th>Deletions</th><th>Similarity</th><th>Mutations</th></tr>
+<table id="detailTable">
+<thead><tr><th onclick="sortTable(0)">#</th><th onclick="sortTable(1)">Name</th><th onclick="sortTable(2)">Reads</th><th onclick="sortTable(3)">Mismatches</th><th onclick="sortTable(4)">Insertions</th><th onclick="sortTable(5)">Deletions</th><th onclick="sortTable(6)">Similarity</th><th>Mutations</th></tr></thead>
+<tbody>
 {detail_rows}
+</tbody>
 </table>
 
 <footer>Generated by CrisViper v{report["version"]}</footer>
@@ -574,35 +595,27 @@ function openModal(img){{
   document.getElementById('modalImg').src=img.src;
   document.getElementById('modalOverlay').classList.add('active');
 }}
+function sortTable(col){{
+  var t=document.getElementById('detailTable'),b=t.querySelector('tbody'),r=Array.from(b.querySelectorAll('tr'));
+  var lr=r[r.length-1]; if(lr&&lr.cells.length===1) r.pop();
+  var asc=t.getAttribute('data-sort')==col?t.getAttribute('data-asc')!=='true':true;
+  r.sort(function(a,b){{
+    var va=a.cells[col].textContent.trim(),vb=b.cells[col].textContent.trim();
+    var na=parseFloat(va),nb=parseFloat(vb);
+    return !isNaN(na)&&!isNaN(nb)?(asc?na-nb:nb-na):(asc?va.localeCompare(vb):vb.localeCompare(va));
+  }});
+  r.forEach(function(x){{b.appendChild(x);}});
+  if(lr&&lr.cells.length===1) b.appendChild(lr);
+  t.setAttribute('data-sort',col); t.setAttribute('data-asc',asc);
+  var ths=t.querySelectorAll('th');ths.forEach(function(th,i){{if(i<7) th.textContent=th.textContent.replace(/[\u25B2\u25BC]/g,'');}});
+  if(col<7) ths[col].textContent+=asc?' \u25B2':' \u25BC';
+}}
 </script>
 </body>
 </html>"""
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html)
 
-
-def _html_bar_plot(dist: dict, title: str, color: str, max_x: int = 50) -> str:
-    """Generate a pure-CSS bar plot HTML string."""
-    if not dist:
-        return f'<div class="plot-title">{title}</div><p style="color:#94a3b8;">No data.</p>'
-    max_len = min(max(dist.keys()), max_x)
-    max_count = max(dist.values()) or 1
-    bars = ""
-    for bp in range(1, max_len + 1):
-        c = dist.get(bp, 0)
-        h_px = int(c / max_count * 120)
-        val_str = str(c) if c > 0 else ""
-        bars += (f'<div class="bcol"><div class="bval">{val_str}</div>'
-                 f'<div class="bbar" style="height:{h_px}px;background:{color};"></div>'
-                 f'<div class="blab">{bp}</div></div>\n')
-    return (f'<div class="plot-title">{title} (n={sum(dist.values()):,})</div>'
-            f'<div class="bar-wrap" style="height:150px;">{bars}</div>'
-            f'<div class="x-axis">Length (bp)</div>')
-
-
-# ═══════════════════════════════════════════════════════════════
-# MATLAB兼容的文本报告输出 (Results.txt / Warnings.txt / AlleleAnnotations.txt)
-# ═══════════════════════════════════════════════════════════════
 
 def save_text_report(
     results: List[Dict],

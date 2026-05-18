@@ -315,6 +315,7 @@ def _align_full_lineage(
         mismatch_density_threshold=config.mismatch_density_threshold,
         mutation_window=config.mutation_window,
         gap_exit_bonus=config.gap_exit_bonus,
+        base_gap_exit=config.gap_exit_base,
         short_match_window=config.short_match_window,
         short_match_discount=config.short_match_discount,
         dense_mismatch_window=config.dense_mismatch_window,

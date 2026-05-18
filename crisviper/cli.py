@@ -103,8 +103,10 @@ def main():
     align_parser.add_argument("--cutsites", default=None,
                               help="cutsite位置配置文件（JSON格式）")
 
-    align_parser.add_argument("--gap-exit-bonus", type=float, default=0.0,
-                              help="退出gap进入match的额外惩罚（≤0，负值使DP倾向合并gap，推荐-1.0）")
+    align_parser.add_argument("--geb-base", type=float, default=-3.5,
+                              help="Gap exit bonus profile基础强度（≤0，推荐-3.5，0=关闭）")
+    align_parser.add_argument("--gap-exit-bonus", type=float, default=None,
+                              help="[已废弃] 请使用--geb-base替代")
     align_parser.add_argument("--short-match-window", type=int, default=0,
                               help="短匹配区域阈值（bp，0=关闭，推荐3~5）")
     align_parser.add_argument("--short-match-discount", type=float, default=1.0,
@@ -185,6 +187,9 @@ def main():
                      args.min_reads, before, len(query_records))
 
         # ── 构建 PipelineConfig ──
+        # gap_exit_bonus backward compat: if --gap-exit-bonus is given, use scalar
+        geb_scalar = args.gap_exit_bonus if args.gap_exit_bonus is not None else 0.0
+        geb_base_val = args.geb_base if args.gap_exit_bonus is None else 0.0
         config = PipelineConfig(
             match_score=args.match_score,
             mismatch_penalty=args.mismatch_penalty,
@@ -201,7 +206,8 @@ def main():
             primer3_len=args.primer3_len,
             primer5_threshold=args.primer5_threshold,
             primer3_threshold=args.primer3_threshold,
-            gap_exit_bonus=args.gap_exit_bonus,
+            gap_exit_bonus=geb_scalar,
+            gap_exit_base=geb_base_val,
             short_match_window=args.short_match_window,
             short_match_discount=args.short_match_discount,
             dense_mismatch_window=args.dense_mismatch_window,

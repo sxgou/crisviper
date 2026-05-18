@@ -41,7 +41,8 @@ def build_gradient_profiles(
     max_scale: float = 6.0,
     cutsite_edge_scale: float = 2.0,
     gradient_radius: Optional[float] = None,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    base_gap_exit: float = 0.0,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build position-dependent gap and mismatch penalty profiles using smoothstep gradient.
 
     For each cutsite, the penalty scale follows:
@@ -82,7 +83,12 @@ def build_gradient_profiles(
     gap_open_profile = base_gap_open * effective_scale
     gap_extend_profile = base_gap_extend * effective_scale
     mismatch_profile = mismatch_penalty * effective_scale
-    return gap_open_profile, gap_extend_profile, mismatch_profile
+    # geb_profile: inverted gradient scaling — strongest penalty at cutsite center
+    if base_gap_exit != 0.0:
+        geb_profile = base_gap_exit * (max_scale + min_scale - effective_scale)
+    else:
+        geb_profile = np.zeros(ref_length, dtype=float)
+    return gap_open_profile, gap_extend_profile, mismatch_profile, geb_profile
 
 
 def build_homology_penalty_profile(
@@ -145,6 +151,7 @@ def lineage_tracer_align(
     mutation_window: int = 3,
     no_gap_prefix: int = 0,
     gap_exit_bonus: float = 0.0,
+    base_gap_exit: float = 0.0,
     short_match_window: int = 0,
     short_match_discount: float = 1.0,
     dense_mismatch_window: int = 6,
@@ -153,23 +160,27 @@ def lineage_tracer_align(
     homology_penalty: float = 0.0,
     isolated_base_penalty: float = 0.0,
 ) -> Tuple[float, str, str, Dict]:
-    gap_open_profile, gap_extend_profile, mismatch_profile = build_gradient_profiles(
+    gap_open_profile, gap_extend_profile, mismatch_profile, geb_profile = build_gradient_profiles(
         ref_length=len(ref_seq), cutsites=cutsites,
         base_gap_open=base_gap_open, base_gap_extend=base_gap_extend,
         mismatch_penalty=mismatch_penalty,
         min_scale=min_scale, max_scale=max_scale,
         cutsite_edge_scale=cutsite_edge_scale,
-        gradient_radius=gradient_radius)
+        gradient_radius=gradient_radius,
+        base_gap_exit=base_gap_exit)
     if no_gap_prefix > 0:
         gap_open_profile[:no_gap_prefix] = -1e6
         gap_extend_profile[:no_gap_prefix] = -1e6
     homology_profile = build_homology_penalty_profile(
         ref_seq, homology_window=homology_window, homology_penalty=homology_penalty)
+    # Use geb_profile when base_gap_exit is set; otherwise fall back to scalar
+    geb_param = {} if base_gap_exit == 0.0 else {"gap_exit_bonus_profile": geb_profile}
     score, aligned_ref, aligned_query, stats = affine_gap_alignment_position_aware(
         ref_seq, query_seq, gap_open_profile, gap_extend_profile,
         match_score=match_score, mismatch_penalty=mismatch_penalty,
         mismatch_penalty_profile=mismatch_profile,
         gap_exit_bonus=gap_exit_bonus,
+        **geb_param,
         short_match_window=short_match_window,
         short_match_discount=short_match_discount,
         dense_mismatch_window=dense_mismatch_window,

@@ -216,6 +216,10 @@ class PipelineConfig:
     # gap_exit_bonus: 退出gap进入match的惩罚（≤0，0=关闭）
     # 负值使DP倾向将孤立匹配吸收到gap中，gap_exit_bonus=-1.0 是推荐值
     gap_exit_bonus: float = 0.0
+    # gap_exit_base: geb_profile基础强度（≤0，0=关闭）
+    # 取代scalar gap_exit_bonus; 按cutsite位置自动计算梯度惩罚
+    # 默认0.0=关闭，推荐-3.5在cutsite中心产生-21.0峰值惩罚
+    gap_exit_base: float = 0.0
 
     # ── 短匹配区域折扣 ──
     # short_match_window: 短匹配区域阈值（bp），0=关闭
