@@ -66,7 +66,7 @@ def identify_sequence_events(
     aligned_query: str,
     ref_seq: str,
     cutsites: Optional[List[CutsiteRegion]] = None,
-    mutation_window: int = 3,
+    sub_window: int = 3,
 ) -> List[MutationEvent]:
     """MATLAB-compatible identify_sequence_events — naive mutation extraction.
 
@@ -86,7 +86,7 @@ def identify_sequence_events(
         aligned_query: Gapped query sequence.
         ref_seq: Full ungapped reference sequence.
         cutsites: Optional list of CutsiteRegion for insertion positioning.
-        mutation_window: Window radius for cutsite proximity detection.
+        sub_window: Cutsite附近保留窗口半径(bp)，用于标记突变是否在窗口内。
 
     Returns:
         List of MutationEvent objects in MATLAB order (D, I, M sorted by position).
@@ -137,7 +137,7 @@ def identify_sequence_events(
             ref_base=seg_ref,
             query_base='-' * length,
             length=length,
-            in_cutsite_window=_in_any_cutsite_window(bp_start, cutsites, mutation_window),
+            in_cutsite_window=_in_any_cutsite_window(bp_start, cutsites, sub_window),
             raw_ref_segment=seg_ref,
             raw_query_segment='-' * length,
         )
@@ -171,7 +171,7 @@ def identify_sequence_events(
                 ref_base='-' * gap_cols,
                 query_base=ins_seq,
                 length=gap_cols,
-                in_cutsite_window=_in_any_cutsite_window(loc, cutsites, mutation_window),
+                in_cutsite_window=_in_any_cutsite_window(loc, cutsites, sub_window),
                 raw_ref_segment='-' * gap_cols,
                 raw_query_segment=ins_seq,
             ))
@@ -187,7 +187,7 @@ def identify_sequence_events(
             ref_base='-' * len(ins_seq),
             query_base=ins_seq,
             length=len(ins_seq),
-            in_cutsite_window=_in_any_cutsite_window(loc, cutsites, mutation_window),
+            in_cutsite_window=_in_any_cutsite_window(loc, cutsites, sub_window),
             raw_ref_segment='-' * len(ins_seq),
             raw_query_segment=ins_seq,
         ))
@@ -204,7 +204,7 @@ def identify_sequence_events(
             ref_base='-' * len(ins_seq),
             query_base=ins_seq,
             length=len(ins_seq),
-            in_cutsite_window=_in_any_cutsite_window(N - 1, cutsites, mutation_window),
+            in_cutsite_window=_in_any_cutsite_window(N - 1, cutsites, sub_window),
             raw_ref_segment='-' * len(ins_seq),
             raw_query_segment=ins_seq,
         ))
@@ -223,7 +223,7 @@ def identify_sequence_events(
                     ref_base=ar,
                     query_base=aq,
                     length=1,
-                    in_cutsite_window=_in_any_cutsite_window(bp, cutsites, mutation_window),
+                    in_cutsite_window=_in_any_cutsite_window(bp, cutsites, sub_window),
                     raw_ref_segment=ar,
                     raw_query_segment=aq,
                 ))
@@ -237,7 +237,7 @@ def identify_cas9_events(
     aligned_query: str,
     ref_seq: str,
     cutsites: List[CutsiteRegion],
-    mutation_window: int = 3,
+    sub_window: int = 3,
 ) -> List[MutationEvent]:
     """MATLAB-compatible identify_cas9_events — compound event merging.
 
@@ -255,13 +255,13 @@ def identify_cas9_events(
         aligned_query: Gapped query sequence.
         ref_seq: Full ungapped reference sequence.
         cutsites: List of CutsiteRegion defining cutsite boundaries.
-        mutation_window: Window radius for cutsite proximity detection.
+        sub_window: Window radius for cutsite proximity detection.
 
     Returns:
         List of MutationEvent objects with compound events merged.
     """
     naive_events = identify_sequence_events(
-        aligned_ref, aligned_query, ref_seq, cutsites, mutation_window
+        aligned_ref, aligned_query, ref_seq, cutsites, sub_window
     )
 
     if len(naive_events) < 2:
@@ -505,7 +505,7 @@ def extract_mutations(
     aligned_ref: str,
     aligned_query: str,
     cutsites: Optional[List[CutsiteRegion]] = None,
-    mutation_window: int = 3,
+    sub_window: int = 3,
 ) -> List[MutationEvent]:
     """从比对结果中提取所有突变事件
 
@@ -519,7 +519,7 @@ def extract_mutations(
         aligned_ref: 比对后的参考序列（含 '-'）
         aligned_query: 比对后的查询序列（含 '-'）
         cutsites: cutsite区域列表（用于判断突变是否在窗口内）
-        mutation_window: cutsite窗口半径（bp）
+        sub_window: cutsite窗口半径（bp）
 
     返回:
         MutationEvent 列表，按 ref 位置排序
@@ -547,7 +547,7 @@ def extract_mutations(
                 ref_base=ar,
                 query_base=aq,
                 length=1,
-                in_cutsite_window=_in_any_cutsite_window(ref_pos, cutsites, mutation_window) if cutsites else True,
+                in_cutsite_window=_in_any_cutsite_window(ref_pos, cutsites, sub_window) if cutsites else True,
                 raw_ref_segment=ar,
                 raw_query_segment=aq,
             )
@@ -569,8 +569,8 @@ def extract_mutations(
                 ref_base=seg_ref,
                 query_base='-' * length,
                 length=length,
-                in_cutsite_window=_in_any_cutsite_window(ref_start, cutsites, mutation_window) or \
-                              _in_any_cutsite_window(ref_end - 1, cutsites, mutation_window) if cutsites else True,
+                in_cutsite_window=_in_any_cutsite_window(ref_start, cutsites, sub_window) or \
+                              _in_any_cutsite_window(ref_end - 1, cutsites, sub_window) if cutsites else True,
                 raw_ref_segment=seg_ref,
                 raw_query_segment='-' * length,
             )
@@ -601,7 +601,7 @@ def extract_mutations(
                 ref_base='-' * length,
                 query_base=seg_query,
                 length=length,
-                in_cutsite_window=_in_any_cutsite_window(max(0, ref_pos), cutsites, mutation_window) if cutsites else True,
+                in_cutsite_window=_in_any_cutsite_window(max(0, ref_pos), cutsites, sub_window) if cutsites else True,
                 raw_ref_segment='-' * length,
                 raw_query_segment=seg_query,
             )
@@ -633,46 +633,67 @@ def _in_any_cutsite_window(
 
 
 def _merge_adjacent_indels(events: List[MutationEvent]) -> List[MutationEvent]:
-    """合并相邻的插入和删除为复合事件
+    """Greedy grouping merge of adjacent events into INDEL.
 
-    例如：[DEL(3-5), INS(5-6)] → COMPLEX(3-6)
-    如果插入和删除的位置相邻且方向兼容，合并为一个复合突变事件。
+    Scans sorted events, collecting consecutive adjacent events into groups.
+    Groups containing at least one INS or DEL are merged into a single INDEL.
+    Pure-SUB groups stay as individual events.
+
+    Adjacency: two events are adjacent if their ref intervals overlap or
+    are within 1bp of each other.
+
+    For DEL:  interval = [ref_pos, ref_pos + length)
+    For INS:  interval = [ref_pos, ref_pos + 1)     (no ref span)
+    For SUB:  interval = [ref_pos, ref_pos + 1)
     """
     if len(events) < 2:
         return events
 
+    def exclusive_end(e: MutationEvent) -> int:
+        if e.type == MutationType.DELETION:
+            return e.ref_pos + e.length
+        return e.ref_pos + 1  # INS and SUB don't span ref positions
+
+    def intervals_adjacent(a: MutationEvent, b: MutationEvent) -> bool:
+        a_end = exclusive_end(a)
+        b_end = exclusive_end(b)
+        return max(a.ref_pos, b.ref_pos) <= min(a_end, b_end) + 1
+
     merged = []
     i = 0
     while i < len(events):
-        if i + 1 < len(events):
-            e1 = events[i]
-            e2 = events[i + 1]
-            # 插入相邻删除 → 复合
-            if (e1.type == MutationType.INSERTION and e2.type == MutationType.DELETION) or \
-               (e1.type == MutationType.DELETION and e2.type == MutationType.INSERTION):
-                # 检查是否相邻
-                adj = False
-                if e1.type == MutationType.INSERTION:
-                    # INS在ref_pos X，DEL在ref_pos Y，如果X≈Y则是相邻
-                    adj = abs(e1.ref_pos - e2.ref_pos) <= max(e1.length, e2.length) + 1
-                else:
-                    adj = abs(e1.ref_pos - e2.ref_pos) <= max(e1.length, e2.length)
+        group = [events[i]]
+        j = i + 1
+        while j < len(events) and intervals_adjacent(group[-1], events[j]):
+            group.append(events[j])
+            j += 1
 
-                if adj:
-                    merged.append(MutationEvent(
-                        type=MutationType.COMPLEX,
-                        ref_pos=min(e1.ref_pos, e2.ref_pos),
-                        length=e1.length + e2.length,
-                        in_cutsite_window=e1.in_cutsite_window or e2.in_cutsite_window,
-                        ref_base=e1.ref_base + e2.ref_base,
-                        query_base=e1.query_base + e2.query_base,
-                        raw_ref_segment=e1.raw_ref_segment + e2.raw_ref_segment,
-                        raw_query_segment=e1.raw_query_segment + e2.raw_query_segment,
-                    ))
-                    i += 2
-                    continue
-        merged.append(events[i])
-        i += 1
+        has_indel = any(
+            e.type in (MutationType.INSERTION, MutationType.DELETION)
+            for e in group
+        )
+
+        if has_indel:
+            ref_start = min(e.ref_pos for e in group)
+            ref_end = max(exclusive_end(e) for e in group)
+            length = ref_end - ref_start
+            all_ref = ''.join(e.ref_base for e in group)
+            all_query = ''.join(e.query_base for e in group)
+            merged.append(MutationEvent(
+                type=MutationType.INDEL,
+                ref_pos=ref_start,
+                ref_base=all_ref,
+                query_base=all_query,
+                length=length,
+                in_cutsite_window=any(e.in_cutsite_window for e in group),
+                raw_ref_segment=all_ref,
+                raw_query_segment=all_query,
+            ))
+        else:
+            merged.extend(group)
+
+        i = j
+
     return merged
 
 
