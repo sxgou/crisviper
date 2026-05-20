@@ -47,7 +47,7 @@ def _event_structure(mutations: List[MutationEvent]) -> str:
             parts.append(f"D{m.length}@{m.ref_pos}")
         elif m.type == MutationType.INSERTION:
             parts.append(f"I{m.length}@{m.ref_pos}")
-        elif m.type == MutationType.COMPLEX:
+        elif m.type == MutationType.INDEL:
             parts.append(f"C{m.length}@{m.ref_pos}")
     return "+".join(parts) if parts else "WT"
 
