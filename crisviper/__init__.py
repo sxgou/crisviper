@@ -33,7 +33,7 @@ from crisviper.mutation import (
     extract_mutations, classify_mutation_type,
     build_mutation_summary, format_mutations_for_display,
     annotate_mutation, annotate_mutations,
-    identify_sequence_events, identify_cas9_events, classify_bp_event,
+    classify_bp_event,
 )
 from crisviper.pipeline import Pipeline, align_single, check_primer_anchoring
 from crisviper.io import (
@@ -55,6 +55,7 @@ from crisviper.caller import (
 from crisviper.reporting import (
     save_alignment_results, generate_report, save_text_report,
 )
+from crisviper.summary import save_summary_tables
 from crisviper.metrics import (
     effective_alleles, diversity_index, alleles_per_cell,
     singletons_per_cell, carlin_potential,
