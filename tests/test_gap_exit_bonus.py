@@ -118,23 +118,23 @@ class TestPipelineGapExitBonus:
                            readCount=rc, seq=seq)
 
     def test_pipeline_lineage_mode_accepts_bonus(self):
-        config = PipelineConfig(lineage_mode=True, gap_exit_bonus=-1.0,
-                                min_reads_snv=1, min_reads_indel=1)
+        config = PipelineConfig(lineage_mode=True, gap_exit_strength=-1.0,
+                                min_reads_sub=0, min_reads_indel=0)
         pipeline = Pipeline(config=config, ref_seq=CARLIN_REF)
         pipeline.load_cutsites()
         result = pipeline.run([self.make_query(CARLIN_REF)])
         assert result.stats.successful == 1
 
     def test_pipeline_standard_mode_accepts_bonus(self):
-        config = PipelineConfig(lineage_mode=False, gap_exit_bonus=-1.0,
-                                min_reads_snv=1, min_reads_indel=1)
+        config = PipelineConfig(lineage_mode=False, gap_exit_strength=-1.0,
+                                min_reads_sub=0, min_reads_indel=0)
         pipeline = Pipeline(config=config, ref_seq=CARLIN_REF)
         result = pipeline.run([self.make_query(CARLIN_REF)])
         assert result.stats.successful == 1
 
     def test_align_single_with_bonus_preserves_wt(self):
-        config = PipelineConfig(lineage_mode=True, gap_exit_bonus=-1.0,
-                                min_reads_snv=1, min_reads_indel=1)
+        config = PipelineConfig(lineage_mode=True, gap_exit_strength=-1.0,
+                                min_reads_sub=0, min_reads_indel=0)
         cutsites = get_amplicon_structure(CARLIN_REF)
         q = self.make_query(CARLIN_REF)
         result = align_single(q, CARLIN_REF, config, cutsites)
@@ -142,10 +142,10 @@ class TestPipelineGapExitBonus:
         assert len(result.mutations) == 0
 
     def test_align_single_with_bonus_reduces_fragmentation(self):
-        config_off = PipelineConfig(lineage_mode=True, gap_exit_bonus=0.0,
-                                    min_reads_snv=1, min_reads_indel=1)
-        config_on  = PipelineConfig(lineage_mode=True, gap_exit_bonus=-1.0,
-                                    min_reads_snv=1, min_reads_indel=1)
+        config_off = PipelineConfig(lineage_mode=True, gap_exit_strength=0.0,
+                                    min_reads_sub=0, min_reads_indel=0)
+        config_on  = PipelineConfig(lineage_mode=True, gap_exit_strength=-1.0,
+                                    min_reads_sub=0, min_reads_indel=0)
         cutsites = get_amplicon_structure(CARLIN_REF)
         qry = CARLIN_REF[:41] + CARLIN_REF[48:]
         result_off = align_single(self.make_query(qry), CARLIN_REF, config_off, cutsites)
@@ -158,15 +158,15 @@ class TestPipelineGapExitBonus:
         assert result_on.success
 
     def test_bonus_with_chain_indel_detection(self):
-        config = PipelineConfig(lineage_mode=True, gap_exit_bonus=-1.0,
-                                min_reads_snv=1, min_reads_indel=1)
+        config = PipelineConfig(lineage_mode=True, gap_exit_strength=-1.0,
+                                min_reads_sub=0, min_reads_indel=0)
         cutsites = get_amplicon_structure(CARLIN_REF)
         qry = CARLIN_REF[:42] + "ACGTA" + CARLIN_REF[42:]
         q = self.make_query(qry, "ins5")
         result = align_single(q, CARLIN_REF, config, cutsites)
         assert result.success, f"Insertion failed with bonus: {result.error}"
         insertions = [m for m in result.mutations
-                      if m.type.name in ("INSERTION", "COMPLEX")]
+                      if m.type.name in ("INSERTION", "INDEL")]
         assert len(insertions) >= 1
 
 
@@ -314,7 +314,7 @@ class TestHomologyPenalty:
         assert np.all(profile == 0.0)
 
     def test_pipeline_accepts_homology_params(self):
-        config = PipelineConfig(lineage_mode=True, homology_window=8, homology_penalty=-1.0, min_reads_snv=1, min_reads_indel=1)
+        config = PipelineConfig(lineage_mode=True, homology_window=8, homology_penalty=-1.0, min_reads_sub=0, min_reads_indel=0)
         pipeline = Pipeline(config=config, ref_seq=CARLIN_REF); pipeline.load_cutsites()
         result = pipeline.run([QueryRecord(readName="t",cellBC="t",UMI="U",readCount=1,seq=CARLIN_REF)])
         assert result.stats.successful == 1
@@ -356,7 +356,7 @@ class TestIsolatedBasePenalty:
         assert isinstance(s_on, float) and len(ar_on) == len(aq_on)
 
     def test_pipeline_accepts_isolated_base(self):
-        config = PipelineConfig(lineage_mode=True, isolated_base_penalty=-2.0, min_reads_snv=1, min_reads_indel=1)
+        config = PipelineConfig(lineage_mode=True, isolated_base_penalty=-2.0, min_reads_sub=0, min_reads_indel=0)
         pipeline = Pipeline(config=config, ref_seq=CARLIN_REF); pipeline.load_cutsites()
         result = pipeline.run([QueryRecord(readName="t",cellBC="t",UMI="U",readCount=1,seq=CARLIN_REF)])
         assert result.stats.successful == 1
@@ -382,11 +382,11 @@ class TestAllParametersCombined:
         assert isinstance(s, float) and len(ar) == len(aq) and st['alignment_length'] > 0
 
     def test_pipeline_all_params(self):
-        config = PipelineConfig(lineage_mode=True, gap_exit_bonus=-1.0,
+        config = PipelineConfig(lineage_mode=True, gap_exit_strength=-1.0,
             short_match_window=3, short_match_discount=0.5,
             dense_mismatch_window=6, dense_mismatch_penalty=-2.0,
             homology_window=8, homology_penalty=-1.0,
-            isolated_base_penalty=-2.0, min_reads_snv=1, min_reads_indel=1)
+            isolated_base_penalty=-2.0, min_reads_sub=0, min_reads_indel=0)
         pipeline = Pipeline(config=config, ref_seq=CARLIN_REF); pipeline.load_cutsites()
         result = pipeline.run([QueryRecord(readName="t",cellBC="t",UMI="U",readCount=1,seq=CARLIN_REF)])
         assert result.stats.successful == 1
