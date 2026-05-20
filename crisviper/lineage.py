@@ -51,8 +51,8 @@ def build_gradient_profiles(
 
     Multiple cutsites are combined by min() — the nearest cutsite dominates.
 
-    Returns: (gap_open_profile, gap_extend_profile, mismatch_profile)
-      All three are 1-D arrays of length ref_length.
+    Returns: (gap_open_profile, gap_extend_profile, mismatch_profile, geb_profile)
+      All four are 1-D arrays of length ref_length.
     """
     if gradient_radius is None:
         gradient_radius = _calc_gradient_radius(cutsites)
@@ -148,7 +148,7 @@ def lineage_tracer_align(
     cutsite_edge_scale: float = 2.0,
     gradient_radius: Optional[float] = None,
     mismatch_density_threshold: float = 0.34,
-    mutation_window: int = 3,
+    sub_window: int = 3,
     no_gap_prefix: int = 0,
     gap_exit_bonus: float = 0.0,
     base_gap_exit: float = 0.0,

@@ -424,11 +424,7 @@ def _save_report_html(report: dict, output_path: str, charts: dict = None,
         'mutation_seq_pie', 'mutation_reads_pie',
         'mutation_type', 'mutation_composition',
         'indel_length', 'indel_position', 'allele_heatmap',
-        'per_target_bar', 'segment_plot', 'cross_target_chord',
     ]}
-    per_target_exists = bool((charts or {}).get('per_target_bar'))
-    segment_exists = bool((charts or {}).get('segment_plot'))
-    chord_exists = bool((charts or {}).get('cross_target_chord'))
 
 
     html = f"""<!DOCTYPE html>
@@ -503,9 +499,6 @@ footer{{margin-top:30px;padding-top:10px;border-top:1px solid var(--bdr);
   <a href="#summary">Summary</a>
   <a href="#indel-length">Indel Length</a>
   <a href="#target-breakdown">Targets</a>
-  <a href="#per-target-chart">Per-Target Chart</a>
-  <a href="#segment-plot">Segment Plot</a>
-  <a href="#chord">Cross-Target Chord</a>
   <a href="#heatmap">Allele Heatmap</a>
   <a href="#mutation-types">Mutation Types</a>
   <a href="#stats">Statistics</a>
@@ -563,15 +556,6 @@ footer{{margin-top:30px;padding-top:10px;border-top:1px solid var(--bdr);
 </div></div>
 
 {has_charts and f'''<div class="chart-box">{chart_map["indel_position"]}</div>''' or ''}
-
-{per_target_exists and f'''<h2 id="per-target-chart">Per-Target Editing Type Distribution</h2>
-<div class="chart-box">{chart_map["per_target_bar"]}</div>''' or ''}
-
-{segment_exists and f'''<h2 id="segment-plot">Mutation Segment Plot</h2>
-<div class="chart-box">{chart_map["segment_plot"]}</div>''' or ''}
-
-{chord_exists and f'''<h2 id="chord">Cross-Target Deletion/Insertion Chord Diagram</h2>
-<div class="chart-box">{chart_map["cross_target_chord"]}</div>''' or ''}
 
 {has_charts and f'''<h2 id="heatmap">Allele Heatmap</h2>
 <div class="chart-box">{chart_map["allele_heatmap"]}</div>''' or ''}

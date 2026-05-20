@@ -142,7 +142,7 @@ def test_build_gradient_profiles():
     ]
     ref_len = 20
     # max_scale == cutsite_edge_scale == 2.0 means no external gradient
-    go, ge, mp = build_gradient_profiles(
+    go, ge, mp, _ = build_gradient_profiles(
         ref_len, cutsites,
         base_gap_open=-2.0, base_gap_extend=-0.1,
         mismatch_penalty=-3.0,
@@ -166,7 +166,7 @@ def test_position_aware_identical():
     ref = "ACGTACGT"
     query = "ACGTACGT"
     cutsites = [CutsiteRegion("T1", 2, 5)]
-    go, ge, mp = build_gradient_profiles(
+    go, ge, mp, _ = build_gradient_profiles(
         len(ref), cutsites,
         base_gap_open=-2.0, base_gap_extend=-0.1, mismatch_penalty=-3.0,
     )
@@ -185,7 +185,7 @@ def test_position_aware_prefers_gap_at_cutsite():
     query = "AAAAATTTTTT"
     cutsites = [CutsiteRegion("T1", 5, 10)]  # C region
 
-    go, ge, mp = build_gradient_profiles(
+    go, ge, mp, _ = build_gradient_profiles(
         len(ref), cutsites,
         base_gap_open=-2.0, base_gap_extend=-0.1, mismatch_penalty=-3.0,
         min_scale=1.0, max_scale=2.0, cutsite_edge_scale=2.0,
@@ -204,7 +204,7 @@ def test_position_aware_anchor5_equal():
     ref = "ACGTACGT"
     query = "ACGTACGT"
     cutsites = [CutsiteRegion("T1", 2, 5)]
-    go, ge, mp = build_gradient_profiles(len(ref), cutsites,
+    go, ge, mp, _ = build_gradient_profiles(len(ref), cutsites,
         base_gap_open=-2.0, base_gap_extend=-0.1, mismatch_penalty=-3.0)
     score, ar, aq, stats = affine_gap_alignment_position_aware(
         ref, query, go, ge, mismatch_penalty_profile=mp,
@@ -220,7 +220,7 @@ def test_position_aware_anchor5_shorter():
     ref = "ACGTACGT"
     query = "ACGT"
     cutsites = [CutsiteRegion("T1", 2, 5)]
-    go, ge, mp = build_gradient_profiles(len(ref), cutsites,
+    go, ge, mp, _ = build_gradient_profiles(len(ref), cutsites,
         base_gap_open=-2.0, base_gap_extend=-0.1, mismatch_penalty=-3.0)
     score, ar, aq, stats = affine_gap_alignment_position_aware(
         ref, query, go, ge, mismatch_penalty_profile=mp,
@@ -237,7 +237,7 @@ def test_position_aware_anchor5_longer():
     ref = "ACGTACGT"
     query = "ACGTACGTAAA"
     cutsites = [CutsiteRegion("T1", 2, 5)]
-    go, ge, mp = build_gradient_profiles(len(ref), cutsites,
+    go, ge, mp, _ = build_gradient_profiles(len(ref), cutsites,
         base_gap_open=-2.0, base_gap_extend=-0.1, mismatch_penalty=-3.0)
     score, ar, aq, stats = affine_gap_alignment_position_aware(
         ref, query, go, ge, mismatch_penalty_profile=mp,

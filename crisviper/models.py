@@ -254,7 +254,7 @@ class PipelineConfig:
 
     # ── Allele过滤（exclusive阈值，>threshold通过） ──
     min_reads_sub: int = 5       # 纯点突变最小readCount（默认>5通过）
-    min_reads_indel: int = 2     # 含indel最小readCount（默认>2通过）
+    min_reads_indel: int = 0     # 含indel最小readCount（0=不过滤）
 
     # ── 背景点突变矫正 ──
     correct_bg_sub: bool = True           # 启用背景点突变矫正

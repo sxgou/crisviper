@@ -47,26 +47,6 @@ def _img_to_b64(fig) -> str:
     return img_b64
 
 
-def _gen_reads_distribution(results: List[Dict]) -> str:
-    """Reads数分布直方图（仅统计成功比对的结果，对数bins + 截断尾部离群值）"""
-    read_counts = [r.get("readCount", 1) for r in results if "error" not in r]
-    if not read_counts:
-        return ""
-    fig, ax = plt.subplots(figsize=(6, 3))
-    # log-spaced bins覆盖主要数据范围（covers 99.95%的数据）
-    log_min, log_max = 0.5, 1000
-    bins = np.logspace(np.log10(log_min), np.log10(log_max), 40)
-    ax.hist(read_counts, bins=bins, color='#4a6cf7', edgecolor='white', alpha=0.8)
-    ax.set_xscale('log')
-    ax.set_xlim(log_min, log_max)
-    ax.set_xlabel('Reads per Unique Sequence')
-    ax.set_ylabel('Sequence Count')
-    ax.set_title('Reads Count Distribution')
-    ax.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
-    fig.tight_layout()
-    return _img_to_b64(fig)
-
-
 def _gen_alignment_rate(results: List[Dict]) -> str:
     """比对成功率饼图"""
     successful = sum(1 for r in results if "error" not in r)
@@ -658,16 +638,17 @@ def _gen_per_target_stacked_bar(results: List[Dict], cutsites: list) -> str:
     if n_targets == 0:
         return ""
 
-    categories = ["Unedited", "Substitution", "Insertion", "Deletion", "Complex", "Mixed"]
+    categories = ["Unedited", "Substitution", "Insertion", "Deletion", "Indel"]
     n_cats = len(categories)
     data = [[0] * n_cats for _ in range(n_targets)]
+    total_reads = [0] * n_targets
 
     successful = [r for r in results if "error" not in r]
 
     for ti, cs in enumerate(cutsites):
         if not cs.name.startswith("Target"):
             continue
-        cs_lo, cs_hi = cs.start - 3, cs.end + 3
+        cs_lo, cs_hi = cs.start - 13, cs.end
         for r in successful:
             ar = r.get("aligned_ref", "")
             if not ar:
@@ -677,12 +658,11 @@ def _gen_per_target_stacked_bar(results: List[Dict], cutsites: list) -> str:
             # --- Coverage check ---
             ref_bases = sum(1 for c in ar if c != '-')
             covers = ref_bases > cs.start
-            # Also check if any mutation spans into the target
             for m in r.get("mutations", []):
                 mp = m.get("ref_pos", -1)
                 ml = m.get("length", 1)
                 mt = m.get("type", "")
-                if mt in ("deletion", "complex"):
+                if mt in ("deletion", "indel"):
                     if mp <= cs_hi and (mp + ml - 1) >= cs_lo:
                         covers = True
                         break
@@ -692,14 +672,16 @@ def _gen_per_target_stacked_bar(results: List[Dict], cutsites: list) -> str:
             if not covers:
                 continue
 
-            # --- Classify mutation types within target window ---
-            has_del = has_ins = has_sub = has_complex = False
+            total_reads[ti] += rc
+
+            # --- Classify mutation types independently ---
+            has_del = has_ins = has_sub = has_indel = False
             for m in r.get("mutations", []):
                 mp = m.get("ref_pos", -1)
                 mt = m.get("type", "")
-                if mt == "complex":
+                if mt == "indel":
                     if mp <= cs_hi and (mp + m.get("length", 1) - 1) >= cs_lo:
-                        has_complex = True
+                        has_indel = True
                 elif cs_lo <= mp <= cs_hi:
                     if mt == "deletion":
                         has_del = True
@@ -708,53 +690,49 @@ def _gen_per_target_stacked_bar(results: List[Dict], cutsites: list) -> str:
                     elif mt == "substitution":
                         has_sub = True
 
-            # Priority: Complex > Mixed > Deletion > Insertion > Substitution > Unedited
-            if has_complex:
+            # Count each type independently (one read can contribute to multiple)
+            if has_indel:
                 data[ti][4] += rc
-            elif has_del and has_ins:
-                data[ti][5] += rc  # Mixed (both indels)
-            elif has_del:
+            if has_del:
                 data[ti][3] += rc
-            elif has_ins:
+            if has_ins:
                 data[ti][2] += rc
-            elif has_sub:
+            if has_sub:
                 data[ti][1] += rc
-            else:
+            if not (has_indel or has_del or has_ins or has_sub):
                 data[ti][0] += rc
 
-    n_reads_per_target = [sum(row) for row in data]
+    # Normalize by total reads per target (not sum of categories)
     pct_data = []
-    for row, total_n in zip(data, n_reads_per_target):
-        pct_data.append([v / total_n * 100 if total_n else 0 for v in row])
+    for row, total in zip(data, total_reads):
+        pct_data.append([v / total * 100 if total else 0 for v in row])
 
     fig, ax = plt.subplots(figsize=(7, 3.5))
     x = range(n_targets)
-    bar_w = 0.75
-    colors = ['#e6e6e6', '#ffd43b', '#4a6cf7', '#ff6b6b', '#e94560', '#b366b3']
-    bottom = [0.0] * n_targets
+    bar_w = 0.12
+    offsets = [-2 * bar_w, -bar_w, 0, bar_w, 2 * bar_w]
+    colors = ['#e6e6e6', '#ffd43b', '#4a6cf7', '#ff6b6b', '#e94560']
 
-    for ci, (color, label) in enumerate(zip(colors, categories)):
+    for ci, (color, label, offset) in enumerate(zip(colors, categories, offsets)):
         vals = [pct_data[ti][ci] for ti in range(n_targets)]
-        bars = ax.bar(x, vals, bar_w, bottom=bottom, color=color,
-                      label=label, edgecolor='white', linewidth=0.3)
+        bars = ax.bar([xi + offset for xi in x], vals, bar_w,
+                      color=color, label=label, edgecolor='white', linewidth=0.3)
         for ti in range(n_targets):
             if vals[ti] > 4:
-                ax.text(ti, bottom[ti] + vals[ti] / 2,
-                        f'{vals[ti]:.0f}%', ha='center', va='center',
-                        fontsize=6.5, color='white' if ci != 1 else '#333',
-                        fontweight='bold')
-        bottom = [b + v for b, v in zip(bottom, vals)]
+                ax.text(ti + offset, vals[ti] + 1.5,
+                        f'{vals[ti]:.0f}%', ha='center', va='bottom',
+                        fontsize=6, color='#333', fontweight='bold')
 
     for ti in range(n_targets):
-        ax.text(ti, -3.5, f'n={n_reads_per_target[ti]}',
+        ax.text(ti, -5, f'n={total_reads[ti]}',
                 ha='center', va='top', fontsize=7, color='#888')
 
     ax.set_xticks(list(x))
     ax.set_xticklabels([cs.name.replace('Target', 'T') for cs in cutsites
                         if cs.name.startswith('Target')], fontsize=8)
     ax.set_ylabel('Reads (%)')
-    ax.set_title('Per-Target Editing Type Distribution (weighted by reads)')
-    ax.set_ylim(-8, 105)
+    ax.set_title('Per-Target Editing Type Distribution (not mutually exclusive)')
+    ax.set_ylim(-10, 105)
     ax.legend(fontsize=7, loc='upper right')
     fig.tight_layout()
     return _img_to_b64(fig)
@@ -895,7 +873,7 @@ def _gen_cross_target_chord(results: List[Dict], cutsites: list) -> str:
     from matplotlib.path import Path
     import matplotlib.patches as mpatches
 
-    target_ranges = [(cs.start, cs.end) for cs in cutsites if cs.name.startswith("Target")]
+    target_ranges = [(cs.start - 13, cs.end) for cs in cutsites if cs.name.startswith("Target")]
 
     # 1. Collect cross-target events
     cross_counts = {}
@@ -909,9 +887,14 @@ def _gen_cross_target_chord(results: List[Dict], cutsites: list) -> str:
             mt = m.get("type", "")
             mp = m.get("ref_pos", -1)
             ml = m.get("length", 1)
-            if mt not in ("deletion", "insertion"):
+            if mt == "deletion":
+                event_end = mp + ml - 1
+            elif mt == "indel":
+                event_end = mp + ml - 1
+            elif mt == "insertion":
+                event_end = mp
+            else:
                 continue
-            event_end = mp + ml - 1 if mt == "deletion" else mp
             affected = []
             for ti, (ts, te) in enumerate(target_ranges):
                 if max(mp, ts) <= min(event_end, te):
@@ -974,7 +957,11 @@ def _gen_cross_target_chord(results: List[Dict], cutsites: list) -> str:
             key = (t1, t2)
             if key not in merged:
                 merged[key] = {"deletion": 0, "insertion": 0}
-            merged[key][etype] += count
+            if etype == "indel":
+                merged[key]["deletion"] += count
+                merged[key]["insertion"] += count
+            else:
+                merged[key][etype] += count
 
         for (t1, t2), vals in merged.items():
             a1, a2 = angles[t1], angles[t2]
@@ -1082,13 +1069,6 @@ def generate_charts(results: List[Dict], report_data: dict = None,
             charts['indel_length'] = _gen_indel_length_chart(report_data)
             charts['indel_position'] = _gen_indel_position_chart(results, ref_length)
             charts['mutation_composition'] = _gen_mutation_composition_chart(report_data)
-            # New charts from notebook integration
-            if cutsites:
-                charts['per_target_bar'] = _gen_per_target_stacked_bar(results, cutsites)
-                charts['cross_target_chord'] = _gen_cross_target_chord(results, cutsites)
-            if ref_seq:
-                charts['segment_plot'] = _gen_mutation_segment_plot(
-                    results, ref_seq, cutsites=cutsites, top_n=allele_top_n)
         # Allele热图（默认显示全长，窗口可调）
         if ref_seq and ref_length > 0:
             ws = allele_window_start

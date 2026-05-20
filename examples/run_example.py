@@ -90,7 +90,7 @@ def main():
 
     config_lineage = PipelineConfig(
         lineage_mode=True,
-        gap_exit_bonus=-1.0,
+        gap_exit_strength=-1.0,
         short_match_window=3,
         short_match_discount=0.5,
         dense_mismatch_penalty=-2.0,

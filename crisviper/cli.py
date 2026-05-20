@@ -28,7 +28,7 @@ from crisviper import (
     fastq_to_dataframe, fastq_to_fasta, save_tsv,
     read_reference_fasta, read_queries_tsv, read_queries_fasta,
     Pipeline,
-    save_alignment_results, generate_report,
+    save_alignment_results, save_summary_tables, generate_report,
     get_amplicon_structure, CutsiteRegion,
     get_logger, setup_logging,
 )
@@ -98,15 +98,15 @@ def main():
                               help="Cutsite边界惩罚倍率（默认：2.0）")
     align_parser.add_argument("--gradient-radius", type=float, default=None,
                               help="梯度有效半径 (bp)，省略则自动计算")
-    align_parser.add_argument("--mutation-window", type=int, default=3)
-    align_parser.add_argument("--density-threshold", type=float, default=0.34)
+    align_parser.add_argument("--sub-window", type=int, default=3,
+                              help="cutsite邻近保留窗口(bp)，控制背景矫正和突变标注")
+    align_parser.add_argument("--mismatch-density-threshold", type=float, default=0.34,
+                              help="密集错配检测密度阈值")
     align_parser.add_argument("--cutsites", default=None,
                               help="cutsite位置配置文件（JSON格式）")
 
-    align_parser.add_argument("--geb-base", type=float, default=-3.5,
-                              help="Gap exit bonus profile基础强度（≤0，推荐-3.5，0=关闭）")
-    align_parser.add_argument("--gap-exit-bonus", type=float, default=None,
-                              help="[已废弃] 请使用--geb-base替代")
+    align_parser.add_argument("--gap-exit-strength", type=float, default=0.0,
+                              help="Gap exit抑制强度（≤0，0=关闭，推荐-3.5在cutsite中心产生约-21.0峰值惩罚）")
     align_parser.add_argument("--short-match-window", type=int, default=0,
                               help="短匹配区域阈值（bp，0=关闭，推荐3~5）")
     align_parser.add_argument("--short-match-discount", type=float, default=1.0,
@@ -133,7 +133,17 @@ def main():
 
     # Allele过滤参数
     align_parser.add_argument("--min-reads", type=int, default=1,
-                              help="最小read数阈值（默认：1，即不过滤）")
+                              help="输入侧最小read数阈值（默认：1，即不过滤，仅用于预过滤）")
+    align_parser.add_argument("--min-reads-sub", type=int, default=5,
+                              help="纯点突变allele最小read数阈值（exclusive，>此值通过，默认5）")
+    align_parser.add_argument("--min-reads-indel", type=int, default=0,
+                              help="含indel的allele最小read数阈值（0=不过滤）")
+
+    # 背景点突变矫正参数
+    align_parser.add_argument("--correct-bg-sub", action=argparse.BooleanOptionalAction,
+                              default=True, help="启用背景点突变矫正（默认开启）")
+    align_parser.add_argument("--keep-sub-indel-window", type=int, default=3,
+                              help="背景矫正时indel邻近保留窗口(bp)")
 
     # 报告参数
     align_parser.add_argument("--report", choices=["json", "html"], default=None)
@@ -187,9 +197,6 @@ def main():
                      args.min_reads, before, len(query_records))
 
         # ── 构建 PipelineConfig ──
-        # gap_exit_bonus backward compat: if --gap-exit-bonus is given, use scalar
-        geb_scalar = args.gap_exit_bonus if args.gap_exit_bonus is not None else 0.0
-        geb_base_val = args.geb_base if args.gap_exit_bonus is None else 0.0
         config = PipelineConfig(
             match_score=args.match_score,
             mismatch_penalty=args.mismatch_penalty,
@@ -200,14 +207,13 @@ def main():
             max_scale=args.max_scale,
             cutsite_edge_scale=args.cutsite_edge_scale,
             gradient_radius=args.gradient_radius,
-            mismatch_density_threshold=args.density_threshold,
-            mutation_window=args.mutation_window,
+            mismatch_density_threshold=args.mismatch_density_threshold,
+            sub_window=args.sub_window,
             primer5_len=args.primer5_len,
             primer3_len=args.primer3_len,
             primer5_threshold=args.primer5_threshold,
             primer3_threshold=args.primer3_threshold,
-            gap_exit_bonus=geb_scalar,
-            gap_exit_base=geb_base_val,
+            gap_exit_strength=args.gap_exit_strength,
             short_match_window=args.short_match_window,
             short_match_discount=args.short_match_discount,
             dense_mismatch_window=args.dense_mismatch_window,
@@ -215,9 +221,8 @@ def main():
             homology_window=args.homology_window,
             homology_penalty=args.homology_penalty,
             isolated_base_penalty=args.isolated_base_penalty,
-            # 智能过滤（min-reads=1时启用智能过滤，>1时用阈值过滤）
-            min_reads_snv=args.min_reads if args.min_reads > 1 else 10,
-            min_reads_indel=args.min_reads if args.min_reads > 1 else 3,
+            min_reads_sub=args.min_reads_sub,
+            min_reads_indel=args.min_reads_indel,
             threads=args.threads,
             cutsites_path=args.cutsites,
             report_format=args.report,
@@ -231,8 +236,8 @@ def main():
         log.info("  梯度惩罚参数: min_scale=%s, max_scale=%s, edge_scale=%s, radius=%s",
                  args.min_scale, args.max_scale, args.cutsite_edge_scale, radius_info)
         if args.lineage:
-            log.info("  突变窗口: cutsite±%s bp, mismatch密度阈值: %s",
-                     args.mutation_window, args.density_threshold)
+            log.info("  sub窗口: cutsite±%s bp, mismatch密度阈值: %s",
+                     args.sub_window, args.mismatch_density_threshold)
 
         if args.threads > 1:
             log.info("开始并行批量比对（全局，%d 线程）...", args.threads)
@@ -248,6 +253,11 @@ def main():
         # ── 保存结果 ──
         save_alignment_results(output_results, args.output, args.format)
 
+        # ── 保存总结表格 ──
+        output_dir = os.path.dirname(os.path.abspath(args.output))
+        save_summary_tables(output_results, output_dir, ref_seq=ref_seq,
+                            cutsites=_get_display_cutsites(ref_seq))
+
         # ── 生成分析报告 ──
         if args.report:
             report_output = args.report_output or _default_report_path(args.output)
@@ -255,7 +265,7 @@ def main():
             generate_report(output_results, report_output, args.report,
                              ref_length=len(ref_seq),
                              ref_seq=ref_seq,
-                             cutsites=_get_display_cutsites(ref_seq, args.lineage),
+                             cutsites=_get_display_cutsites(ref_seq),
                              allele_window_start=args.allele_window_start,
                              allele_window_end=args.allele_window_end,
                              allele_top_n=args.allele_top_n,
@@ -276,7 +286,7 @@ def _default_report_path(output_path: str) -> str:
     return f"{base}_report"
 
 
-def _get_display_cutsites(ref_seq: str, lineage_mode: bool):
+def _get_display_cutsites(ref_seq: str):
     """获取用于热图标注的cutsite信息"""
     try:
         from crisviper import get_amplicon_structure

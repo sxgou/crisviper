@@ -160,31 +160,139 @@ def _extract_internal_region(
 def check_allele_confidence(
     stats: AlignmentStats,
     read_count: int,
-    min_reads_snv: int = 10,
-    min_reads_indel: int = 3,
+    min_reads_sub: int = 5,
+    min_reads_indel: int = 0,
 ) -> Tuple[bool, str]:
     """检查Allele置信度
 
     规则:
-      - 仅点突变（无indel）需 readCount >= min_reads_snv
-      - 有indel的需 readCount >= min_reads_indel
+      - 仅点突变（无indel）需 readCount > min_reads_sub
+      - 有indel的需 readCount > min_reads_indel
       - 无突变的野生型直接通过
 
     返回: (通过与否, 原因)
     """
     if not stats.has_indel and stats.mismatches > 0:
         # 仅点突变
-        if read_count < min_reads_snv:
-            return False, f"假阳性: 仅点突变但readCount不足({read_count}<{min_reads_snv})"
+        if read_count <= min_reads_sub:
+            return False, f"假阳性: 仅点突变但readCount不足({read_count}<={min_reads_sub})"
     elif stats.has_indel:
         # 有indel
-        if read_count < min_reads_indel:
-            return False, f"假阳性: 有indel但readCount不足({read_count}<{min_reads_indel})"
+        if read_count <= min_reads_indel:
+            return False, f"假阳性: 有indel但readCount不足({read_count}<={min_reads_indel})"
     return True, ""
 
 
 # ═══════════════════════════════════════════════════════════════
-# 步骤3: 单序列比对（完整的 align_single 逻辑）
+# 步骤3: 背景点突变矫正
+# ═══════════════════════════════════════════════════════════════
+
+def correct_background_substitutions(
+    ar_int: str,
+    aq_int: str,
+    cutsites: Optional[List[CutsiteRegion]],
+    sub_window: int = 3,
+    keep_sub_indel_window: int = 3,
+    lineage_mode: bool = True,
+) -> str:
+    """校正背景点突变：将cutsite窗口和indel邻近区外的substitution改回reference
+
+    在合并allele之前调用，消除测序背景点突变导致的等位基因碎片化。
+
+    保留规则（满足任一即保留）：
+      1. 谱系模式：cutsite ± sub_window 内的 substitution
+      2. 标准模式：cutsite 自身范围内的 substitution
+      3. 任意模式：indel 任一端点 ± keep_sub_indel_window 内的 substitution
+
+    Args:
+        ar_int: 内部区域比对的参考序列（含gap）
+        aq_int: 内部区域比对的查询序列（含gap）
+        cutsites: cutsite区域列表（已转换到内部区域坐标）
+        sub_window: cutsite邻近保留窗口(bp)
+        keep_sub_indel_window: indel邻近保留窗口(bp)
+        lineage_mode: 是否谱系示踪模式
+
+    Returns:
+        矫正后的 aq_int
+    """
+    if cutsites is None or not ar_int or len(ar_int) != len(aq_int):
+        return aq_int
+
+    pos_map, total = _build_ref_pos_map_full(ar_int)
+
+    # Step 1: 收集 indel 涉及的 ref 坐标区间（扩展 flank）
+    indel_keep_regions = []
+    i = 0
+    alen = len(ar_int)
+    while i < alen:
+        # Deletion: ref has base, query is gap
+        if ar_int[i] != '-' and aq_int[i] == '-':
+            start = pos_map[i]
+            while i < alen and ar_int[i] != '-' and aq_int[i] == '-':
+                i += 1
+            end = pos_map[i - 1]
+            rs = max(0, start - keep_sub_indel_window)
+            re = min(total - 1, end + keep_sub_indel_window)
+            indel_keep_regions.append((rs, re))
+        # Insertion: ref is gap, query has base
+        elif ar_int[i] == '-' and aq_int[i] != '-':
+            left_pos = pos_map[i - 1] if i > 0 and pos_map[i - 1] >= 0 else 0
+            while i < alen and ar_int[i] == '-' and aq_int[i] != '-':
+                i += 1
+            rs = max(0, left_pos - keep_sub_indel_window)
+            re = min(total - 1, left_pos + keep_sub_indel_window)
+            indel_keep_regions.append((rs, re))
+        else:
+            i += 1
+
+    # Step 2: 构建保留区域集合（区间合并）
+    keep_intervals = []  # (start, end) inclusive
+
+    # 2a: cutsite 区域
+    for cs in cutsites:
+        if lineage_mode:
+            ks = max(0, cs.start - sub_window)
+            ke = min(total - 1, cs.end + sub_window)
+        else:
+            ks = max(0, cs.start)
+            ke = min(total - 1, cs.end)
+        keep_intervals.append((ks, ke))
+
+    # 2b: indel flanking
+    keep_intervals.extend(indel_keep_regions)
+
+    if not keep_intervals:
+        return aq_int
+
+    # 合并重叠区间
+    keep_intervals.sort()
+    merged = [keep_intervals[0]]
+    for s, e in keep_intervals[1:]:
+        if s <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+
+    # Step 3: 遍历 substitution 列，判断是否保留
+    aq_list = list(aq_int)
+    for i in range(alen):
+        if ar_int[i] != '-' and aq_int[i] != '-' and ar_int[i] != aq_int[i]:
+            ref_pos = pos_map[i]
+            if ref_pos < 0:
+                continue
+            in_keep = False
+            for ks, ke in merged:
+                if ks <= ref_pos <= ke:
+                    in_keep = True
+                    break
+            if not in_keep:
+                aq_list[i] = ar_int[i]
+
+    return ''.join(aq_list)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 步骤4: 单序列比对（完整的 align_single 逻辑）
 # ═══════════════════════════════════════════════════════════════
 
 
@@ -200,6 +308,7 @@ def align_single(
       1. 全长全局比对（ref 332bp vs query）
       2. 引物区比对质量检查（取代双端锚定先验检查）
       3. 内部区域提取（trim 掉引物列）
+      4. 背景点突变矫正（合并allele前，消除测序背景）
       5. 使用 WT 引物组装全长输出
       6. 内部区域重计分
       7. 突变识别
@@ -243,7 +352,19 @@ def align_single(
     if ar_int is None:
         return AlignmentResult.error_result(query, "无法从全长比对中提取内部区域")
 
-    # ── 步骤4: WT 引物组装 ──
+    # ── 步骤4: 背景点突变矫正（合并allele前） ──
+    if config.correct_bg_sub and cutsites is not None:
+        int_r_len = len(r_seq) - p5 - p3
+        internal_cutsites = _adjust_cutsites_to_internal(cutsites, p5, int_r_len)
+        aq_int = correct_background_substitutions(
+            ar_int, aq_int,
+            cutsites=internal_cutsites,
+            sub_window=config.sub_window,
+            keep_sub_indel_window=config.keep_sub_indel_window,
+            lineage_mode=config.lineage_mode,
+        )
+
+    # ── 步骤5: WT 引物组装 ──
     aligned_ref, aligned_query = _assemble_full_length(
         ar_int, aq_int, r_seq, p5, p3,
     )
@@ -266,8 +387,21 @@ def align_single(
     mutations = extract_mutations(
         ar_int, aq_int,
         cutsites=internal_cutsites,
-        mutation_window=config.mutation_window,
+        sub_window=config.sub_window,
     )
+
+    # 转换 ref_pos 从内部坐标 → 全长参考坐标
+    for m in mutations:
+        m.ref_pos += config.primer5_len
+
+    # ── 步骤8: Allele置信度过滤 ──
+    passed, reason = check_allele_confidence(
+        stats, query.readCount,
+        min_reads_sub=config.min_reads_sub,
+        min_reads_indel=config.min_reads_indel,
+    )
+    if not passed:
+        return AlignmentResult.error_result(query, reason)
 
     return AlignmentResult(
         query=query,
@@ -313,9 +447,9 @@ def _align_full_lineage(
         cutsite_edge_scale=config.cutsite_edge_scale,
         gradient_radius=config.gradient_radius,
         mismatch_density_threshold=config.mismatch_density_threshold,
-        mutation_window=config.mutation_window,
-        gap_exit_bonus=config.gap_exit_bonus,
-        base_gap_exit=config.gap_exit_base,
+        sub_window=config.sub_window,
+        gap_exit_bonus=0.0,
+        base_gap_exit=config.gap_exit_strength,
         short_match_window=config.short_match_window,
         short_match_discount=config.short_match_discount,
         dense_mismatch_window=config.dense_mismatch_window,
@@ -349,7 +483,7 @@ def _align_full_standard(
                              "similarity": 0.0, "identity": 0.0, "score": 0.0}
 
     if cutsites and config.gradient_mode:
-        gap_open_p, gap_extend_p, mismatch_p = build_gradient_profiles(
+        gap_open_p, gap_extend_p, mismatch_p, _ = build_gradient_profiles(
             ref_length=len(r_seq), cutsites=cutsites,
             base_gap_open=config.gap_open, base_gap_extend=config.gap_extend,
             mismatch_penalty=config.mismatch_penalty,
@@ -366,7 +500,7 @@ def _align_full_standard(
             match_score=config.match_score,
             mismatch_penalty=config.mismatch_penalty,
             mismatch_penalty_profile=mismatch_p,
-            gap_exit_bonus=config.gap_exit_bonus,
+            gap_exit_bonus=config.gap_exit_strength,
             short_match_window=config.short_match_window,
             short_match_discount=config.short_match_discount,
             dense_mismatch_window=config.dense_mismatch_window,
@@ -382,132 +516,11 @@ def _align_full_standard(
             mismatch_penalty=config.mismatch_penalty,
             gap_open=config.gap_open,
             gap_extend=config.gap_extend,
-            gap_exit_bonus=config.gap_exit_bonus,
+            gap_exit_bonus=config.gap_exit_strength,
             short_match_window=config.short_match_window,
             short_match_discount=config.short_match_discount,
         )
     return score, ar, aq, raw_stats
-
-
-# ═══════════════════════════════════════════════════════════════
-# 片段化比对修复
-# ═══════════════════════════════════════════════════════════════
-
-def _fix_fragmented_alignment(
-    ar_int: str,
-    aq_int: str,
-    int_r: str,
-    int_q: str,
-    config: PipelineConfig,
-) -> Tuple[str, str, float]:
-    """修复因重复元件导致的片段化或位置偏移比对"""
-    # ── 从 aq_int 中提取所有非 gap 片段 ──
-    blocks = []
-    in_block = False
-    for i, c in enumerate(aq_int):
-        if c != '-':
-            if not in_block:
-                block_start = i
-                in_block = True
-        else:
-            if in_block:
-                blocks.append((block_start, i, aq_int[block_start:i]))
-                in_block = False
-    if in_block:
-        blocks.append((block_start, len(aq_int), aq_int[block_start:]))
-
-    if not blocks:
-        return ar_int, aq_int, 0.0
-
-    # ── 判断是否需要矫正 ──
-    first_nongap = blocks[0][0]
-    last_block_end = blocks[-1][1]
-
-    shifted = first_nongap > 20
-    scattered = len(blocks) >= 2 and last_block_end < len(int_r) - 5
-    needs_anchoring = shifted or scattered or len(blocks) > 2
-
-    if not (needs_anchoring and len(int_q) <= len(int_r) - 10):
-        if len(blocks) > 2:
-            # 轻度片段化：基于参考位置重新放置每个片段
-            return _place_blocks_at_ref_positions(ar_int, blocks)
-        return ar_int, aq_int, 0.0
-
-    # ── 计算每个片段在 int_r 上的起止坐标（strip gap） ──
-    block_ref_positions = []
-    for start, end, seq in blocks:
-        r_start = sum(1 for c in ar_int[:start] if c != '-')
-        r_end = sum(1 for c in ar_int[:end] if c != '-')
-        block_ref_positions.append((r_start, r_end, start, seq))
-
-    # ── 安全守卫：检测片段间是否存在真实缺失 ──
-    #   间距 > 3 且间隔区域非简单重复 → 视为真实 indel，跳过修复
-    has_real_indel = False
-    for i in range(len(block_ref_positions) - 1):
-        _, cur_end, _, _ = block_ref_positions[i]
-        next_start, _, _, _ = block_ref_positions[i + 1]
-        gap = next_start - cur_end
-        if gap > 3:
-            gap_seq = int_r[cur_end:next_start]
-            if len(gap_seq) > 3 and len(set(gap_seq)) > 2:
-                has_real_indel = True
-                break
-
-    if has_real_indel:
-        return ar_int, aq_int, 0.0
-
-    # ── 基于参考位置构建新的 aq_int ──
-    #   每个片段放在 ar_int 中对应参考位置处，而非暴力拼接
-    new_aq = ['-'] * len(ar_int)
-    for r_start, _r_end, _orig_start, seq in block_ref_positions:
-        insert_pos = 0
-        non_gap_cnt = 0
-        while insert_pos < len(ar_int) and non_gap_cnt < r_start:
-            if ar_int[insert_pos] != '-':
-                non_gap_cnt += 1
-            insert_pos += 1
-        if non_gap_cnt == r_start:
-            limit = min(len(seq), len(new_aq) - insert_pos)
-            for i in range(limit):
-                new_aq[insert_pos + i] = seq[i]
-
-    new_aq_str = ''.join(new_aq)
-
-    # ── 基于真实比对位置计算分数 ──
-    matches = sum(1 for i in range(len(new_aq_str))
-                  if new_aq_str[i] != '-' and new_aq_str[i] == ar_int[i])
-    mismatches = sum(1 for i in range(len(new_aq_str))
-                     if new_aq_str[i] != '-' and new_aq_str[i] != ar_int[i])
-    score = (matches * config.match_score +
-             mismatches * config.mismatch_penalty)
-    return ar_int, new_aq_str, score
-
-
-def _place_blocks_at_ref_positions(
-    ar_int: str,
-    blocks: list,
-) -> Tuple[str, str, float]:
-    """将 aq_int 的各个非 gap 片段按其参考坐标重新放置。
-
-    每个片段原本在 ar_int 中有对应的参考区域，此函数保持每个片段
-    与其参考区域的对应关系，而非简单拼接。
-    """
-    new_aq = ['-'] * len(ar_int)
-    for start, end, seq in blocks:
-        # 计算此片段覆盖的参考区域起止（去除 ar_int 中的 gap）
-        r_start = sum(1 for c in ar_int[:start] if c != '-')
-        # 找到 ar_int 中第 r_start 个非 gap 字符的起始位置
-        insert_pos = 0
-        cnt = 0
-        while insert_pos < len(ar_int) and cnt < r_start:
-            if ar_int[insert_pos] != '-':
-                cnt += 1
-            insert_pos += 1
-        if cnt == r_start:
-            limit = min(len(seq), len(new_aq) - insert_pos)
-            for i in range(limit):
-                new_aq[insert_pos + i] = seq[i]
-    return ar_int, ''.join(new_aq), 0.0
 
 
 # ═══════════════════════════════════════════════════════════════
