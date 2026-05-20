@@ -25,7 +25,8 @@ from typing import List, Dict
 
 from crisviper import (
     PipelineConfig, PipelineResult, AlignmentResult, QueryRecord,
-    fastq_to_dataframe, fastq_to_fasta, save_tsv,
+    fastq_to_dataframe, fastq_to_fasta, fastq_to_fasta_from_rows,
+    merge_paired_end, save_tsv,
     read_reference_fasta, read_queries_tsv, read_queries_fasta,
     Pipeline,
     save_alignment_results, save_summary_tables, generate_report,
@@ -62,17 +63,39 @@ def main():
 
     # fastq-to-tsv
     tsv_parser = convert_subparsers.add_parser("fastq-to-tsv", help="将FASTQ转换为TSV格式")
-    tsv_parser.add_argument("--fastq", required=True, help="输入FASTQ文件（支持.gz压缩）")
+    tsv_parser.add_argument("--fastq", default=None, help="输入FASTQ文件（单端模式，支持.gz）")
+    tsv_parser.add_argument("--fastq1", default=None, help="双端模式R1 FASTQ文件（配合 --fastq2）")
+    tsv_parser.add_argument("--fastq2", default=None, help="双端模式R2 FASTQ文件（配合 --fastq1）")
     tsv_parser.add_argument("--output", required=True, help="输出TSV文件路径")
     tsv_parser.add_argument("--sample-name", default="sample", help="样本名称")
     tsv_parser.add_argument("--min-reads", type=int, default=1,
                             help="最小read数阈值（默认：1，即不过滤）")
+    # 双端合并参数
+    tsv_parser.add_argument("--min-overlap", type=int, default=10,
+                            help="双端合并最小overlap长度 (bp)，默认10")
+    tsv_parser.add_argument("--max-mismatch-rate", type=int, default=20,
+                            help="双端合并overlap错配比例上限 (%%)，默认20")
+    tsv_parser.add_argument("--max-mismatch-diff", type=int, default=5,
+                            help="双端合并overlap最大错配绝对数，默认5")
+    tsv_parser.add_argument("--require-qual", type=int, default=15,
+                            help="双端合并碱基质量阈值(phred)，默认15")
 
     # fastq-to-fasta
     fasta_parser = convert_subparsers.add_parser("fastq-to-fasta", help="将FASTQ转换为FASTA格式")
-    fasta_parser.add_argument("--fastq", required=True, help="输入FASTQ文件（支持.gz压缩）")
+    fasta_parser.add_argument("--fastq", default=None, help="输入FASTQ文件（单端模式，支持.gz）")
+    fasta_parser.add_argument("--fastq1", default=None, help="双端模式R1 FASTQ文件（配合 --fastq2）")
+    fasta_parser.add_argument("--fastq2", default=None, help="双端模式R2 FASTQ文件（配合 --fastq1）")
     fasta_parser.add_argument("--output", required=True, help="输出FASTA文件路径")
     fasta_parser.add_argument("--sample-name", default="sample", help="样本名称")
+    # 双端合并参数
+    fasta_parser.add_argument("--min-overlap", type=int, default=10,
+                              help="双端合并最小overlap长度 (bp)，默认10")
+    fasta_parser.add_argument("--max-mismatch-rate", type=int, default=20,
+                              help="双端合并overlap错配比例上限 (%%)，默认20")
+    fasta_parser.add_argument("--max-mismatch-diff", type=int, default=5,
+                              help="双端合并overlap最大错配绝对数，默认5")
+    fasta_parser.add_argument("--require-qual", type=int, default=15,
+                              help="双端合并碱基质量阈值(phred)，默认15")
 
     # ── 子命令: align（并行批量比对） ──────────────────────────────
     align_parser = subparsers.add_parser("align", help="并行批量序列比对")
@@ -160,7 +183,22 @@ def main():
     # ═══════════════════════════════════════════════════════════════
     if args.command == "convert":
         if args.convert_command == "fastq-to-tsv":
-            rows = fastq_to_dataframe(args.fastq, args.sample_name)
+            # 双端模式
+            if args.fastq1 and args.fastq2:
+                rows = merge_paired_end(
+                    args.fastq1, args.fastq2,
+                    min_overlap=args.min_overlap,
+                    max_mismatch_rate=args.max_mismatch_rate,
+                    max_mismatch_diff=args.max_mismatch_diff,
+                    require_qual=args.require_qual,
+                    sample_name=args.sample_name,
+                )
+            elif args.fastq:
+                rows = fastq_to_dataframe(args.fastq, args.sample_name)
+            else:
+                log.error("请指定 --fastq（单端）或 --fastq1 + --fastq2（双端）")
+                sys.exit(1)
+
             if args.min_reads > 1:
                 before = len(rows)
                 rows = [r for r in rows if r['readCount'] >= args.min_reads]
@@ -168,7 +206,21 @@ def main():
             save_tsv(rows, args.output)
 
         elif args.convert_command == "fastq-to-fasta":
-            fastq_to_fasta(args.fastq, args.output, args.sample_name)
+            if args.fastq1 and args.fastq2:
+                rows = merge_paired_end(
+                    args.fastq1, args.fastq2,
+                    min_overlap=args.min_overlap,
+                    max_mismatch_rate=args.max_mismatch_rate,
+                    max_mismatch_diff=args.max_mismatch_diff,
+                    require_qual=args.require_qual,
+                    sample_name=args.sample_name,
+                )
+                fastq_to_fasta_from_rows(rows, args.output)
+            elif args.fastq:
+                fastq_to_fasta(args.fastq, args.output, args.sample_name)
+            else:
+                log.error("请指定 --fastq（单端）或 --fastq1 + --fastq2（双端）")
+                sys.exit(1)
 
     elif args.command == "align":
         # 读取reference
