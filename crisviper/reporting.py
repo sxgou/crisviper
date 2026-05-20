@@ -644,7 +644,7 @@ def save_text_report(
     Returns:
         The output directory path.
     """
-    from crisviper.mutation import identify_cas9_events, annotate_mutations
+    from crisviper.mutation import extract_mutations, annotate_mutations
 
     os.makedirs(output_path, exist_ok=True)
 
@@ -698,7 +698,7 @@ def _write_allele_annotations(
     cutsites: Optional[List] = None,
 ) -> None:
     """Write AlleleAnnotations.txt — HGVS annotations for each read."""
-    from crisviper.mutation import identify_cas9_events, annotate_mutations
+    from crisviper.mutation import extract_mutations, annotate_mutations
 
     path = os.path.join(output_path, "AlleleAnnotations.txt")
     with open(path, 'w') as f:
@@ -706,7 +706,7 @@ def _write_allele_annotations(
             aligned_ref = r.get("aligned_ref", "")
             aligned_query = r.get("aligned_query", "")
             if aligned_ref and aligned_query and ref_seq:
-                events = identify_cas9_events(aligned_ref, aligned_query, ref_seq, cutsites or [])
+                events = extract_mutations(aligned_ref, aligned_query, cutsites=cutsites)
                 ann = annotate_mutations(events, full=False)
                 f.write(ann + "\n")
             else:
