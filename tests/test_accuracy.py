@@ -18,7 +18,7 @@ from crisviper import (
     get_amplicon_structure, CutsiteRegion,
     affine_gap_alignment,
     affine_gap_alignment_position_aware,
-    build_gap_penalty_profile,
+    build_gradient_profiles,
     lineage_tracer_align,
     extract_mutations,
     MutationEvent, MutationType,
@@ -94,8 +94,8 @@ def _run_align_single(
     read_name: str = "test",
     read_count: int = 50,
     lineage_mode: bool = True,
-    min_reads_snv: int = 1,
-    min_reads_indel: int = 1,
+    min_reads_sub: int = 0,
+    min_reads_indel: int = 0,
 ) -> 'AlignmentResult':
     """通过 align_single 比对单条序列，返回 AlignmentResult"""
     config = PipelineConfig(
@@ -104,7 +104,7 @@ def _run_align_single(
         primer3_len=33,
         primer5_threshold=19,
         primer3_threshold=29,
-        min_reads_snv=min_reads_snv,
+        min_reads_sub=min_reads_sub,
         min_reads_indel=min_reads_indel,
     )
     query = QueryRecord(
@@ -118,8 +118,8 @@ def _run_align_single(
 def _run_pipeline(
     queries,
     lineage_mode: bool = True,
-    min_reads_snv: int = 1,
-    min_reads_indel: int = 1,
+    min_reads_sub: int = 0,
+    min_reads_indel: int = 0,
 ):
     """运行完整 pipeline，返回 PipelineResult"""
     config = PipelineConfig(
@@ -128,7 +128,7 @@ def _run_pipeline(
         primer3_len=33,
         primer5_threshold=19,
         primer3_threshold=29,
-        min_reads_snv=min_reads_snv,
+        min_reads_sub=min_reads_sub,
         min_reads_indel=min_reads_indel,
         threads=1,
     )
@@ -207,13 +207,13 @@ class TestMutationDetectionAccuracy:
 
         deletions = [m for m in result.mutations if m.type == MutationType.DELETION]
         if not deletions:
-            deletions = [m for m in result.mutations if m.type == MutationType.COMPLEX]
+            deletions = [m for m in result.mutations if m.type == MutationType.INDEL]
         assert len(deletions) >= 1, \
             f"未检测到删除突变: {[(m.type, m.length) for m in result.mutations]}"
 
         # 总删除长度（可能分布在多个事件中）
         total_del_len = sum(m.length for m in result.mutations
-                            if m.type in (MutationType.DELETION, MutationType.COMPLEX))
+                            if m.type in (MutationType.DELETION, MutationType.INDEL))
         assert total_del_len >= 7, \
             f"总删除长度应≥7，实际为 {total_del_len}"
 
@@ -228,7 +228,7 @@ class TestMutationDetectionAccuracy:
         assert result.success, f"多cutsite突变比对失败: {result.error}"
 
         types = {m.type for m in result.mutations}
-        has_deletion = MutationType.DELETION in types or MutationType.COMPLEX in types
+        has_deletion = MutationType.DELETION in types or MutationType.INDEL in types
         has_substitution = MutationType.SUBSTITUTION in types
         assert has_deletion, f"未检测到删除，检测到类型: {types}"
         assert has_substitution, f"未检测到替换，检测到类型: {types}"
@@ -241,7 +241,7 @@ class TestMutationDetectionAccuracy:
 
         # 应该有删除事件
         deletions = [m for m in result.mutations if m.type in
-                     (MutationType.DELETION, MutationType.COMPLEX)]
+                     (MutationType.DELETION, MutationType.INDEL)]
         total_del_len = sum(m.length for m in deletions)
         assert total_del_len >= 15, \
             f"大删除长度应≥15，实际检测到 {total_del_len}"
@@ -351,7 +351,7 @@ class TestEditingEfficiency:
             lineage_mode=True,
             primer5_len=23, primer3_len=33,
             primer5_threshold=19, primer3_threshold=29,
-            min_reads_snv=10,
+            min_reads_sub=10,
             min_reads_indel=3,
             threads=1,
         )
@@ -359,13 +359,13 @@ class TestEditingEfficiency:
         pipeline.load_cutsites()
         result = pipeline.run(queries)
 
-        # 5 好mut + 5 bad_sub + 5 wt = 15 全部成功（假阳性过滤已移除）
-        assert result.stats.successful == 15, \
-            f"预期15条成功，实际 {result.stats.successful} (失败: {result.stats.failed})"
-        # 10 mutations: 5 good_del + 5 bad_sub (substitution仍在窗口内)
-        assert result.stats.mutated_sequences == 10
-        # 编辑效率 = 10/15 * 100 = 66.7%
-        assert result.stats.editing_efficiency_pct == pytest.approx(200.0 / 3.0, abs=0.1)
+        # 5 good_del + 5 wt = 10 成功（5 bad_sub 被假阳性过滤）
+        assert result.stats.successful == 10, \
+            f"预期10条成功，实际 {result.stats.successful} (失败: {result.stats.failed})"
+        # 5 good_del（bad_sub被假阳性过滤，仅保留deletion）
+        assert result.stats.mutated_sequences == 5
+        # 编辑效率 = 5/10 * 100 = 50%
+        assert result.stats.editing_efficiency_pct == pytest.approx(50.0, abs=0.1)
 
     def test_stats_consistency(self):
         """统计数据一致性验证"""
@@ -399,30 +399,28 @@ class TestEditingEfficiency:
 class TestPositionAwareGapPenalty:
     """验证 gap 是否优先在 cutsite 区域开启而非保守区域"""
 
-    def test_build_gap_penalty_profile_correctness(self):
-        """gap惩罚配置文件的数值正确性"""
+    def test_build_gradient_profiles_correctness(self):
+        """梯度惩罚配置文件的数值正确性"""
         ref_len = 20
         cutsites = [CutsiteRegion("T1", 5, 10)]
-        go, ge = build_gap_penalty_profile(
+        go, ge, mp, _ = build_gradient_profiles(
             ref_len, cutsites,
             base_gap_open=-2.0, base_gap_extend=-0.1,
-            cutsite_scale=1.0, flank_scale=2.0, far_scale=2.0, flank_width=3,
+            mismatch_penalty=-3.0,
+            min_scale=1.0, max_scale=2.0, cutsite_edge_scale=2.0,
         )
 
-        # cutsite 区域 (5-10): scale=1.0 → open=-2.0, extend=-0.1
-        for i in range(5, 11):
-            assert go[i] == pytest.approx(-2.0), f"cutsite go[{i}]"
-            assert ge[i] == pytest.approx(-0.1), f"cutsite ge[{i}]"
-
-        # far 区域 (0-1, 14-19): scale=2.0 → open=-4.0, extend=-0.2
+        # far 区域 (0-1, 14-19): max_scale=2.0 → open=-4.0, extend=-0.2
         for i in [0, 1, 15, 16, 17, 18, 19]:
             assert go[i] == pytest.approx(-4.0), f"far go[{i}]"
             assert ge[i] == pytest.approx(-0.2), f"far ge[{i}]"
 
-        # flank 区域 (2-4, 11-13): scale=2.0 → open=-4.0
-        for i in [2, 3, 4, 11, 12, 13]:
-            assert go[i] == pytest.approx(-4.0), f"flank go[{i}]"
-            assert ge[i] == pytest.approx(-0.2), f"flank ge[{i}]"
+        # cutsite 中心 (7-8): 接近 min_scale=1.0 → open ≈ -2.0
+        assert go[7] > -2.5, f"center go[7]={go[7]} should be near -2.0"
+        assert go[8] > -2.5, f"center go[8]={go[8]} should be near -2.0"
+        # cutsite 边缘 (5, 10): 接近 edge_scale=2.0 → open ≈ -4.0
+        assert go[5] < -3.0, f"edge go[5]={go[5]} should be near -4.0"
+        assert go[10] < -3.0, f"edge go[10]={go[10]} should be near -4.0"
 
     def test_position_aware_alignment_gap_in_cutsite(self):
         """位置感知比对将gap放置在cutsite区域（低成本区域）"""
@@ -433,13 +431,15 @@ class TestPositionAwareGapPenalty:
         cutsites = [CutsiteRegion("T1", 4, 7)]
 
         # 位置感知比对（cutsite gap 惩罚低）
-        go, ge = build_gap_penalty_profile(
+        go, ge, mp, _ = build_gradient_profiles(
             len(ref), cutsites,
             base_gap_open=-2.0, base_gap_extend=-0.1,
-            cutsite_scale=1.0, far_scale=2.0, flank_scale=3.0,
+            mismatch_penalty=-3.0,
+            min_scale=1.0, max_scale=2.0, cutsite_edge_scale=2.0,
         )
         _, ar, aq, stats = affine_gap_alignment_position_aware(
             ref, query, go, ge,
+            mismatch_penalty_profile=mp,
         )
 
         # 应有gap (6bp 删除)
@@ -470,13 +470,15 @@ class TestPositionAwareGapPenalty:
         )
 
         # 位置感知比对（cutsite gap 惩罚低，两侧惩罚较高）
-        go, ge = build_gap_penalty_profile(
+        go, ge, mp, _ = build_gradient_profiles(
             len(ref), cutsites,
             base_gap_open=-2.0, base_gap_extend=-0.1,
-            cutsite_scale=1.0, far_scale=5.0, flank_scale=5.0,
+            mismatch_penalty=-3.0,
+            min_scale=1.0, max_scale=5.0, cutsite_edge_scale=5.0,
         )
         _, ar_pa, aq_pa, stats_pa = affine_gap_alignment_position_aware(
             ref, query, go, ge,
+            mismatch_penalty_profile=mp,
         )
 
         # 位置感知比对应有gap
@@ -499,8 +501,8 @@ class TestPositionAwareGapPenalty:
 
         score, ar, aq, stats = lineage_tracer_align(
             ref, query, cutsites,
-            cutsite_gap_scale=1.0,
-            far_gap_scale=2.0,
+            min_scale=1.0,
+            max_scale=2.0,
         )
 
         # 应检测到 6bp 删除
@@ -557,7 +559,7 @@ class TestExtractMutationsAccuracy:
         ar = "ACGTACGTACGT"
         aq = "ACG---GTACGT"  # dashes at positions 3-5 for TAC deletion
         cutsites = [CutsiteRegion("T1", 3, 5)]
-        mutations = extract_mutations(ar, aq, cutsites=cutsites, mutation_window=3)
+        mutations = extract_mutations(ar, aq, cutsites=cutsites, sub_window=3)
 
         deletions = [m for m in mutations if m.type == MutationType.DELETION]
         assert len(deletions) >= 1
@@ -569,7 +571,7 @@ class TestExtractMutationsAccuracy:
         ar = "ACGTACGTACGT"
         aq = "ACG---GTACGT"  # dashes at positions 3-5 for TAC deletion
         cutsites = [CutsiteRegion("T1", 8, 10)]  # cutsite 远离删除位置
-        mutations = extract_mutations(ar, aq, cutsites=cutsites, mutation_window=1)
+        mutations = extract_mutations(ar, aq, cutsites=cutsites, sub_window=1)
 
         deletions = [m for m in mutations if m.type == MutationType.DELETION]
         assert len(deletions) >= 1
@@ -597,8 +599,8 @@ class TestExtractMutationsAccuracy:
         mutations = extract_mutations(ar, aq)
 
         types = {m.type for m in mutations}
-        assert MutationType.COMPLEX in types, \
-            f"相邻插入+删除应合并为COMPLEX: {types}"
+        assert MutationType.INDEL in types, \
+            f"相邻插入+删除应合并为INDEL: {types}"
 
     def test_empty_inputs(self):
         """空输入返回空列表"""
@@ -669,13 +671,15 @@ def run_accuracy_checks(check_func):
     ref = "AAATTTCCCGGG"
     query = "AAAGGG"
     cutsites = [CutsiteRegion("T1", 4, 7)]
-    go, ge = build_gap_penalty_profile(
+    go, ge, mp = build_gradient_profiles(
         len(ref), cutsites,
         base_gap_open=-2.0, base_gap_extend=-0.1,
-        cutsite_scale=1.0, far_scale=2.0, flank_scale=3.0,
+        mismatch_penalty=-3.0,
+        min_scale=1.0, max_scale=2.0, cutsite_edge_scale=2.0,
     )
     _, ar, aq, stats = affine_gap_alignment_position_aware(
         ref, query, go, ge,
+        mismatch_penalty_profile=mp,
     )
     gap_indices = {i for i, c in enumerate(aq) if c == '-'}
     cutsite_range = set(range(4, 8))

@@ -18,7 +18,7 @@ class MutationType(Enum):
     SUBSTITUTION = "substitution"       # 点突变（替换）
     DELETION = "deletion"               # 删除（query 中有 gap）
     INSERTION = "insertion"             # 插入（ref 中有 gap）
-    COMPLEX = "complex"                 # 复合突变（插入+删除相邻）
+    INDEL = "indel"                     # 复合突变（插入+删除相邻）
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -203,17 +203,20 @@ class PipelineConfig:
 
     # ── 谱系示踪模式 ──
     lineage_mode: bool = False
-    cutsite_gap_scale: float = 1.0
-    flank_gap_scale: float = 2.0
-    far_gap_scale: float = 6.0
-    flank_width: int = 3
+    # 梯度惩罚: 以 cutsite 为中心平滑变化，替代离散区域倍率
+    gradient_mode: bool = True      # 标准模式下也启用位置感知（需要cutsite信息）
+    min_scale: float = 1.0          # 切割点处最低惩罚倍率
+    max_scale: float = 6.0          # 保守区最高惩罚倍率
+    cutsite_edge_scale: float = 2.0  # Cutsite 边界惩罚倍率
+    gradient_radius: Optional[float] = None  # 梯度半径: None=自动(多cutsite)/30bp(单)
     mismatch_density_threshold: float = 0.34
-    mutation_window: int = 3
+    sub_window: int = 3
 
-    # ── Gap合并控制 ──
-    # gap_exit_bonus: 退出gap进入match的惩罚（≤0，0=关闭）
-    # 负值使DP倾向将孤立匹配吸收到gap中，gap_exit_bonus=-1.0 是推荐值
-    gap_exit_bonus: float = 0.0
+    # ── Gap退出惩罚 ──
+    # gap_exit_strength: Gap exit抑制强度（≤0，0=关闭）
+    # 按cutsite位置自动计算梯度惩罚，在cutsite中心产生最强抑制
+    # 默认0.0=关闭，推荐-3.5在cutsite中心产生约-21.0峰值惩罚
+    gap_exit_strength: float = 0.0
 
     # ── 短匹配区域折扣 ──
     # short_match_window: 短匹配区域阈值（bp），0=关闭
@@ -239,7 +242,7 @@ class PipelineConfig:
     # ── 孤立碱基端点和并惩罚（吸收孤立匹配到gap端点） ──
     # 孤立匹配：前后被gap包围的单个碱基匹配
     # 负值使DP倾向将孤立匹配吸收到gap中，减少碎片化比对
-    # 与 gap_exit_bonus 协同：gap_exit_bonus 惩罚gap→M的过渡，
+    # 与 gap_exit_strength 协同：gap_exit_strength 惩罚gap→M的过渡，
     # isolated_base_penalty 惩罚过渡后只有1bp匹配的场景
     isolated_base_penalty: float = 0.0
 
@@ -249,36 +252,13 @@ class PipelineConfig:
     primer5_threshold: int = 19
     primer3_threshold: int = 29
 
-    # ── Allele过滤 ──
-    min_reads_snv: int = 10      # 仅点突变所需最小readCount
-    min_reads_indel: int = 3     # 有indel所需最小readCount
+    # ── Allele过滤（exclusive阈值，>threshold通过） ──
+    min_reads_sub: int = 5       # 纯点突变最小readCount（默认>5通过）
+    min_reads_indel: int = 0     # 含indel最小readCount（0=不过滤）
 
-    # ── 矫正管线（按执行顺序） ──
-    corrections: List[str] = field(default_factory=lambda: [
-        "convert_dense_mismatch_to_indel",
-        "correct_repetitive_misalignment",
-        "correct_target_misalignments",
-        "remove_isolated_matches",
-        "filter_point_mutations",
-    ])
-
-    # ── 重复序列矫正配置 ──
-    # "auto": 从reference动态检测重复序列
-    # "hardcoded": 使用硬编码的重复序列列表（向后兼容）
-    # "off": 跳过重复序列矫正
-    repeat_correction_mode: str = "auto"
-
-    # ── 小片段跨靶点矫正 ──
-    enable_target_misalignment_correction: bool = True
-
-    # ── 孤立匹配清除 ──
-    enable_isolated_match_removal: bool = True
-
-    # ── 密集错配矫正（后处理） ──
-    enable_dense_mismatch_correction: bool = True
-
-    # ── 点突变过滤（后处理） ──
-    enable_point_mutation_filtering: bool = True
+    # ── 背景点突变矫正 ──
+    correct_bg_sub: bool = True           # 启用背景点突变矫正
+    keep_sub_indel_window: int = 3        # 矫正时indel邻近保留窗口(bp)
 
     # ── 多线程 ──
     threads: int = 1

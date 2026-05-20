@@ -90,7 +90,7 @@ def main():
 
     config_lineage = PipelineConfig(
         lineage_mode=True,
-        gap_exit_bonus=-1.0,
+        gap_exit_strength=-1.0,
         short_match_window=3,
         short_match_discount=0.5,
         dense_mismatch_penalty=-2.0,
@@ -111,12 +111,6 @@ def main():
     log.info("Mutated: %d / %d (%.1f%%)",
              len(mutated_l), len(success_l),
              len(mutated_l) / len(success_l) * 100 if success_l else 0)
-
-    n_corrected = sum(
-        1 for r in result_lineage.results if r.success and r.stats
-        and getattr(r.stats, "n_mutations_corrected", 0) > 0
-    )
-    log.info("Corrected alignments: %d", n_corrected)
 
     # ── Step 5: Save results and report ──────────────────────
     output_json = os.path.join(OUTPUT_DIR, "alignments.json")

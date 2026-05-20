@@ -57,6 +57,7 @@ def _build_score_matrix(ref_seq: str, query_seq: str,
                         short_match_window: int, short_match_discount: float,
                         homology_profile: Optional[np.ndarray],
                         gap_exit_bonus: float,
+                        gap_exit_bonus_profile: Optional[np.ndarray],
                         dense_mismatch_active: bool,
                         dense_mismatch_window: int,
                         isolated_base_penalty: float,
@@ -231,10 +232,10 @@ def affine_gap_alignment(ref_seq: str, query_seq: str,
                 a, b, c = Mi_1[j] + go_ge, Ixi_1[j] + go_ge, Iyi_1[j] + gap_extend
                 Iyi[j] = a if a >= b and a >= c else (b if b >= c else c)
 
-    max_score = max(M[m, n], Ix[m, n], Iy[m, n])
-    max_state = 'M' if M[m, n] >= max(Ix[m, n], Iy[m, n]) else \
-                ('Ix' if Ix[m, n] >= Iy[m, n] else 'Iy')
-    i, j, state = m, n, max_state
+    # Global alignment: only M[m, n] is valid at termination
+    max_score = M[m, n]
+    state = 'M'
+    i, j = m, n
     aligned_ref, aligned_query = [], []
     while i > 0 and j > 0:
         if state == 'M':
@@ -281,6 +282,7 @@ def affine_gap_alignment_position_aware(
     mismatch_penalty: float = -3.0,
     mismatch_penalty_profile: Optional[np.ndarray] = None,
     gap_exit_bonus: float = 0.0,
+    gap_exit_bonus_profile: Optional[np.ndarray] = None,
     short_match_window: int = 0,
     short_match_discount: float = 1.0,
     dense_mismatch_window: int = 6,
@@ -297,7 +299,7 @@ def affine_gap_alignment_position_aware(
         ref_seq, query_seq, match_score, mismatch_penalty,
         mismatch_penalty_profile,
         short_match_window, short_match_discount,
-        homology_profile, gap_exit_bonus,
+        homology_profile, gap_exit_bonus, gap_exit_bonus_profile,
         dense_mismatch_active, dense_mismatch_window,
         isolated_base_penalty)
 
@@ -332,7 +334,9 @@ def affine_gap_alignment_position_aware(
     for j in range(1, n + 1):
         Ix[0, j] = gap_open_profile[0] + gap_extend_profile[0] * (j - 1)
 
-    gap_exit_active = (gap_exit_bonus != 0.0)
+    gap_exit_active = (gap_exit_bonus != 0.0 or gap_exit_bonus_profile is not None)
+    # Prefer profile over scalar when both are provided
+    use_profile_geb = gap_exit_bonus_profile is not None
 
     for i in range(1, m + 1):
         Mi_1 = M[i - 1]
@@ -362,12 +366,18 @@ def affine_gap_alignment_position_aware(
         prev_best = np.maximum(Mi_1[:n], np.maximum(Ixi_1[:n], Iyi_1[:n]))
         Mi[1:] = s_row + prev_best[:n]
 
+        # ── Determine gap exit value for this row ──
+        if use_profile_geb:
+            geb_i = gap_exit_bonus_profile[i - 1]
+        else:
+            geb_i = gap_exit_bonus
+
         # ── Compute Ix[i, :] — sequential within row ──
         # Ix[i, j] = max(M[i,j-1] + go_ge_i, Ix[i,j-1] + ge_i, Iy[i,j-1] + go_ge_i)
         if gap_exit_active:
             for j in range(1, n + 1):
-                # For M, re-compute with gap_exit_bonus
-                m_best = max(Mi_1[j - 1], Ixi_1[j - 1] + gap_exit_bonus, Iyi_1[j - 1] + gap_exit_bonus)
+                # For M, re-compute with gap_exit_bonus at this row position
+                m_best = max(Mi_1[j - 1], Ixi_1[j - 1] + geb_i, Iyi_1[j - 1] + geb_i)
                 Mi[j] = s_row[j - 1] + m_best
                 _a = Mi[j - 1] + go_ge_i
                 _b = Ixi[j - 1] + ge_i
@@ -382,17 +392,21 @@ def affine_gap_alignment_position_aware(
                 Ixi[j] = _a if _a >= _b and _a >= _c else (_b if _b >= _c else _c)
 
     # ── Backtrace ──
-    max_score = max(M[m, n], Ix[m, n], Iy[m, n])
-    max_state = 'M' if M[m, n] >= max(Ix[m, n], Iy[m, n]) else \
-                ('Ix' if Ix[m, n] >= Iy[m, n] else 'Iy')
-    i, j, state = m, n, max_state
+    # Global alignment: only M[m, n] is valid at termination
+    max_score = M[m, n]
+    state = 'M'
+    i, j = m, n
     aligned_ref, aligned_query = [], []
     while i > 0 and j > 0:
         if state == 'M':
             aligned_ref.append(ref_seq[i - 1])
             aligned_query.append(query_seq[j - 1])
             if gap_exit_active:
-                scores = [M[i - 1, j - 1], Ix[i - 1, j - 1] + gap_exit_bonus, Iy[i - 1, j - 1] + gap_exit_bonus]
+                if use_profile_geb:
+                    geb_i = gap_exit_bonus_profile[i - 1]
+                else:
+                    geb_i = gap_exit_bonus
+                scores = [M[i - 1, j - 1], Ix[i - 1, j - 1] + geb_i, Iy[i - 1, j - 1] + geb_i]
             else:
                 scores = [M[i - 1, j - 1], Ix[i - 1, j - 1], Iy[i - 1, j - 1]]
             state = ['M', 'Ix', 'Iy'][np.argmax(scores)]

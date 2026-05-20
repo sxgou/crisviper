@@ -30,7 +30,11 @@ crisviper align --reference ref.fa --queries reads.tsv --output results.json --l
 
 **Parallel processing.** ProcessPoolExecutor with automatic core detection (capped at 12 threads). Falls back to single-thread on worker failure. OMP_NUM_THREADS=1 set automatically to avoid NumPy thread conflicts under fork.
 
-**Output.** JSON, TSV, or both. Optional HTML report with mutation classification, length distributions, and editing efficiency.
+**Output.** JSON, TSV, or both. Optional HTML report with mutation classification, length distributions, editing efficiency, per-target editing charts, mutation segment plots, cross-target chord diagrams, and allele heatmaps. Summary tables (TSV) for allele frequency, per-target editing, filter reasons, indel length distributions, and event-level details.
+
+**Allele confidence filter.** Point-mutation-only alleles require `readCount > 5` (`--min-reads-sub`). Indel-containing alleles are unfiltered by default (`--min-reads-indel 0`). Adjust thresholds for higher precision or recall.
+
+**Summary tables.** The pipeline generates 6 TSV tables alongside the main output: `allele_frequency.tsv`, `per_target_editing.tsv`, `filter_reason.tsv`, `deletion_length.tsv`, `insertion_length.tsv`, and `event_level_details.tsv` — covering aggregate statistics, per-target editing rates, filter causes, length distributions, and per-event details with target overlap info.
 
 ## Docs
 

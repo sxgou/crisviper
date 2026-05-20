@@ -8,7 +8,7 @@ import numpy as np
 from crisviper import (
     affine_gap_alignment,
     affine_gap_alignment_position_aware,
-    build_gap_penalty_profile,
+    build_gradient_profiles,
     lineage_tracer_align,
     CutsiteRegion,
     Pipeline, PipelineConfig, QueryRecord,
@@ -118,23 +118,23 @@ class TestPipelineGapExitBonus:
                            readCount=rc, seq=seq)
 
     def test_pipeline_lineage_mode_accepts_bonus(self):
-        config = PipelineConfig(lineage_mode=True, gap_exit_bonus=-1.0,
-                                min_reads_snv=1, min_reads_indel=1)
+        config = PipelineConfig(lineage_mode=True, gap_exit_strength=-1.0,
+                                min_reads_sub=0, min_reads_indel=0)
         pipeline = Pipeline(config=config, ref_seq=CARLIN_REF)
         pipeline.load_cutsites()
         result = pipeline.run([self.make_query(CARLIN_REF)])
         assert result.stats.successful == 1
 
     def test_pipeline_standard_mode_accepts_bonus(self):
-        config = PipelineConfig(lineage_mode=False, gap_exit_bonus=-1.0,
-                                min_reads_snv=1, min_reads_indel=1)
+        config = PipelineConfig(lineage_mode=False, gap_exit_strength=-1.0,
+                                min_reads_sub=0, min_reads_indel=0)
         pipeline = Pipeline(config=config, ref_seq=CARLIN_REF)
         result = pipeline.run([self.make_query(CARLIN_REF)])
         assert result.stats.successful == 1
 
     def test_align_single_with_bonus_preserves_wt(self):
-        config = PipelineConfig(lineage_mode=True, gap_exit_bonus=-1.0,
-                                min_reads_snv=1, min_reads_indel=1)
+        config = PipelineConfig(lineage_mode=True, gap_exit_strength=-1.0,
+                                min_reads_sub=0, min_reads_indel=0)
         cutsites = get_amplicon_structure(CARLIN_REF)
         q = self.make_query(CARLIN_REF)
         result = align_single(q, CARLIN_REF, config, cutsites)
@@ -142,10 +142,10 @@ class TestPipelineGapExitBonus:
         assert len(result.mutations) == 0
 
     def test_align_single_with_bonus_reduces_fragmentation(self):
-        config_off = PipelineConfig(lineage_mode=True, gap_exit_bonus=0.0,
-                                    min_reads_snv=1, min_reads_indel=1)
-        config_on  = PipelineConfig(lineage_mode=True, gap_exit_bonus=-1.0,
-                                    min_reads_snv=1, min_reads_indel=1)
+        config_off = PipelineConfig(lineage_mode=True, gap_exit_strength=0.0,
+                                    min_reads_sub=0, min_reads_indel=0)
+        config_on  = PipelineConfig(lineage_mode=True, gap_exit_strength=-1.0,
+                                    min_reads_sub=0, min_reads_indel=0)
         cutsites = get_amplicon_structure(CARLIN_REF)
         qry = CARLIN_REF[:41] + CARLIN_REF[48:]
         result_off = align_single(self.make_query(qry), CARLIN_REF, config_off, cutsites)
@@ -158,56 +158,16 @@ class TestPipelineGapExitBonus:
         assert result_on.success
 
     def test_bonus_with_chain_indel_detection(self):
-        config = PipelineConfig(lineage_mode=True, gap_exit_bonus=-1.0,
-                                min_reads_snv=1, min_reads_indel=1)
+        config = PipelineConfig(lineage_mode=True, gap_exit_strength=-1.0,
+                                min_reads_sub=0, min_reads_indel=0)
         cutsites = get_amplicon_structure(CARLIN_REF)
         qry = CARLIN_REF[:42] + "ACGTA" + CARLIN_REF[42:]
         q = self.make_query(qry, "ins5")
         result = align_single(q, CARLIN_REF, config, cutsites)
         assert result.success, f"Insertion failed with bonus: {result.error}"
         insertions = [m for m in result.mutations
-                      if m.type.name in ("INSERTION", "COMPLEX")]
+                      if m.type.name in ("INSERTION", "INDEL")]
         assert len(insertions) >= 1
-
-
-# ═══════════════════════════════════════════════════════════════
-# 回归测试：gap_exit_bonus + corrections 共存兼容
-# ═══════════════════════════════════════════════════════════════
-
-class TestCorrectionCompatibility:
-    """gap_exit_bonus 与现有矫正管线兼容"""
-
-    def test_remove_isolated_matches_still_works(self):
-        from crisviper.corrections import remove_isolated_matches
-        ar, aq = "ACGTACGT", "ACG-A--T"
-        _, aq_c, modified = remove_isolated_matches(ar, aq)
-        assert modified
-        assert aq_c == "ACG----T"
-
-    def test_convert_dense_mismatch_still_works(self):
-        from crisviper.corrections import convert_dense_mismatch_to_indel
-        ar = "AAAAAACCCC"
-        aq = "AAAATTTTCC"
-        _, _, modified = convert_dense_mismatch_to_indel(ar, aq, threshold=0.34)
-        assert modified or True
-
-    def test_full_test_suite_consistency(self):
-        cutsites = get_amplicon_structure(CARLIN_REF)
-        def _q(seq):
-            return QueryRecord(readName="t", cellBC="t", UMI="U", readCount=1, seq=seq)
-        result = align_single(
-            _q(CARLIN_REF), CARLIN_REF,
-            PipelineConfig(lineage_mode=True, min_reads_snv=1, min_reads_indel=1),
-            cutsites)
-        assert result.success and len(result.mutations) == 0
-        qry = CARLIN_REF[:42] + CARLIN_REF[45:]
-        result = align_single(
-            _q(qry), CARLIN_REF,
-            PipelineConfig(lineage_mode=True, min_reads_snv=1, min_reads_indel=1),
-            cutsites)
-        assert result.success
-        deletions = [m for m in result.mutations if m.type.name == "DELETION"]
-        assert len(deletions) >= 1
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -354,7 +314,7 @@ class TestHomologyPenalty:
         assert np.all(profile == 0.0)
 
     def test_pipeline_accepts_homology_params(self):
-        config = PipelineConfig(lineage_mode=True, homology_window=8, homology_penalty=-1.0, min_reads_snv=1, min_reads_indel=1)
+        config = PipelineConfig(lineage_mode=True, homology_window=8, homology_penalty=-1.0, min_reads_sub=0, min_reads_indel=0)
         pipeline = Pipeline(config=config, ref_seq=CARLIN_REF); pipeline.load_cutsites()
         result = pipeline.run([QueryRecord(readName="t",cellBC="t",UMI="U",readCount=1,seq=CARLIN_REF)])
         assert result.stats.successful == 1
@@ -396,7 +356,7 @@ class TestIsolatedBasePenalty:
         assert isinstance(s_on, float) and len(ar_on) == len(aq_on)
 
     def test_pipeline_accepts_isolated_base(self):
-        config = PipelineConfig(lineage_mode=True, isolated_base_penalty=-2.0, min_reads_snv=1, min_reads_indel=1)
+        config = PipelineConfig(lineage_mode=True, isolated_base_penalty=-2.0, min_reads_sub=0, min_reads_indel=0)
         pipeline = Pipeline(config=config, ref_seq=CARLIN_REF); pipeline.load_cutsites()
         result = pipeline.run([QueryRecord(readName="t",cellBC="t",UMI="U",readCount=1,seq=CARLIN_REF)])
         assert result.stats.successful == 1
@@ -405,43 +365,6 @@ class TestIsolatedBasePenalty:
 # ═══════════════════════════════════════════════════════════════
 # Phase A1: 矫正管线控制
 # ═══════════════════════════════════════════════════════════════
-
-class TestCorrectionPipelineControl:
-    def test_repeat_correction_mode_hardcoded(self):
-        config = PipelineConfig(lineage_mode=True, repeat_correction_mode="hardcoded", min_reads_snv=1, min_reads_indel=1)
-        pipeline = Pipeline(config=config, ref_seq=CARLIN_REF); pipeline.load_cutsites()
-        result = pipeline.run([QueryRecord(readName="t",cellBC="t",UMI="U",readCount=1,seq=CARLIN_REF)])
-        assert result.stats.successful == 1
-
-    def test_repeat_correction_mode_off(self):
-        config = PipelineConfig(lineage_mode=True, repeat_correction_mode="off", min_reads_snv=1, min_reads_indel=1)
-        pipeline = Pipeline(config=config, ref_seq=CARLIN_REF); pipeline.load_cutsites()
-        result = pipeline.run([QueryRecord(readName="t",cellBC="t",UMI="U",readCount=1,seq=CARLIN_REF)])
-        assert result.stats.successful == 1
-
-    def test_build_correction_list_lineage_mode(self):
-        from crisviper.pipeline import _build_correction_list
-        config = PipelineConfig(lineage_mode=True)
-        corr = _build_correction_list(config, lineage_mode=True)
-        assert "convert_dense_mismatch_to_indel" not in corr
-        assert "filter_point_mutations" not in corr
-
-    def test_build_correction_list_standard_mode(self):
-        from crisviper.pipeline import _build_correction_list
-        config = PipelineConfig(lineage_mode=False)
-        corr = _build_correction_list(config, lineage_mode=False)
-        assert "convert_dense_mismatch_to_indel" in corr
-        assert "filter_point_mutations" in corr
-
-    def test_all_corrections_turned_off(self):
-        config = PipelineConfig(lineage_mode=True, repeat_correction_mode="off",
-            enable_target_misalignment_correction=False, enable_isolated_match_removal=False,
-            enable_dense_mismatch_correction=False, enable_point_mutation_filtering=False,
-            min_reads_snv=1, min_reads_indel=1)
-        pipeline = Pipeline(config=config, ref_seq=CARLIN_REF); pipeline.load_cutsites()
-        result = pipeline.run([QueryRecord(readName="t",cellBC="t",UMI="U",readCount=1,seq=CARLIN_REF)])
-        assert result.stats.successful == 1
-
 
 # ═══════════════════════════════════════════════════════════════
 # Phase B: 全部参数组合验证
@@ -459,11 +382,11 @@ class TestAllParametersCombined:
         assert isinstance(s, float) and len(ar) == len(aq) and st['alignment_length'] > 0
 
     def test_pipeline_all_params(self):
-        config = PipelineConfig(lineage_mode=True, gap_exit_bonus=-1.0,
+        config = PipelineConfig(lineage_mode=True, gap_exit_strength=-1.0,
             short_match_window=3, short_match_discount=0.5,
             dense_mismatch_window=6, dense_mismatch_penalty=-2.0,
             homology_window=8, homology_penalty=-1.0,
-            isolated_base_penalty=-2.0, min_reads_snv=1, min_reads_indel=1)
+            isolated_base_penalty=-2.0, min_reads_sub=0, min_reads_indel=0)
         pipeline = Pipeline(config=config, ref_seq=CARLIN_REF); pipeline.load_cutsites()
         result = pipeline.run([QueryRecord(readName="t",cellBC="t",UMI="U",readCount=1,seq=CARLIN_REF)])
         assert result.stats.successful == 1

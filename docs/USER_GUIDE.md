@@ -56,7 +56,9 @@ crisviper align \
   --report html
 ```
 
-`--lineage` 开启结构感知的 gap 惩罚、自动检测 cutsite 位置、后处理矫正。HTML 报告包含突变类型分布、长度分布和摘要统计。
+`--lineage` 开启结构感知的梯度 gap 惩罚、自动检测 cutsite 位置。HTML 报告包含突变类型分布、长度分布、摘要统计和等位基因热图。
+
+输出目录下还会生成 6 个 TSV 总结表格：`allele_frequency.tsv`、`per_target_editing.tsv`、`filter_reason.tsv`、`deletion_length.tsv`、`insertion_length.tsv`、`event_level_details.tsv`。
 
 ### 3. 单细胞 RNA-seq 谱系数据
 
@@ -76,7 +78,7 @@ crisviper align \
   --output results.json \
   --lineage \
   --report html \
-  --gap-exit-bonus -1.0 \
+  --gap-exit-strength -1.0 \
   --short-match-window 3 --short-match-discount 0.5 \
   --dense-mismatch-penalty -2.0 \
   --homology-penalty -1.0 \
@@ -147,9 +149,9 @@ ACGTACGT...
 |--------|---------|-------------|
 | `--reference` | — | 参考序列 FASTA |
 | `--queries` | — | 查询序列文件（TSV 或 FASTA） |
-| `--output` | — | 输出路径 |
+| `--output` | — | 输出路径（`--format all` 时作为前缀） |
 | `--format` | `json` | 输出格式：`json`、`tsv`、`all` |
-| `--threads` / `-t` | 1 | 并行进程数（默认 1=单线程） |
+| `--threads` / `-t` | 1 | 并行进程数 |
 
 **打分参数：**
 
@@ -159,43 +161,32 @@ ACGTACGT...
 | `--mismatch-penalty` | -3.0 | 错配惩罚 |
 | `--gap-open` | -2.0 | Gap 开启惩罚 |
 | `--gap-extend` | -0.1 | Gap 延伸惩罚 |
-| `--global` | off | 全局比对（默认半全局） |
 
 **谱系模式参数：**
 
 | Option | Default | Description / 说明 |
 |--------|---------|-------------|
-| `--lineage` | off | 开启谱系示踪比对 |
-| `--cutsite-scale` | 1.0 | Cutsite gap 惩罚倍率（越低越易开 gap） |
-| `--flank-scale` | 2.0 | 侧翼区倍率（±flank-width） |
-| `--far-scale` | 6.0 | 保守区倍率 |
-| `--flank-width` | 3 | 侧翼宽度 (bp) |
-| `--mutation-window` | 3 | Cutsite 保留点突变的窗口半径 (bp) |
-| `--density-threshold` | 0.34 | Mismatch 密度阈值，超过则转为 indel |
-| `--cutsites` | auto | Cutsite JSON 文件路径（省略则自动检测） |
+| `--lineage` | off | 开启谱系示踪比对（结构感知梯度 gap 惩罚） |
+| `--min-scale` | 1.0 | 切割点处最低惩罚倍率（越低越易开 gap） |
+| `--max-scale` | 6.0 | 保守区最高惩罚倍率 |
+| `--cutsite-edge-scale` | 2.0 | Cutsite 边界惩罚倍率 |
+| `--gradient-radius` | auto | 梯度有效半径 (bp)，省略则自动计算 |
+| `--sub-window` | 3 | Cutsite 邻近保留窗口 (bp)，控制背景矫正和突变标注 |
+| `--mismatch-density-threshold` | 0.34 | 密集错配检测密度阈值，超过则转为 indel |
+| `--cutsites` | auto | Cutsite 配置文件路径（JSON 格式，省略则自动检测） |
 
 **DP 原生特征（谱系模式推荐）：**
 
 | Option | Default | Recommended | Description / 说明 |
 |--------|---------|-------------|-------------|
-| `--gap-exit-bonus` | 0.0 | -1.0 | Gap→match 转换的惩罚；合并碎片化 indel |
+| `--gap-exit-strength` | 0.0 | -1.0 | Gap→match 转换惩罚；合并碎片化 indel（≤0，0=关闭） |
 | `--short-match-window` | 0 | 3 | 短匹配区域阈值 (bp)，0=关闭 |
 | `--short-match-discount` | 1.0 | 0.5 | 短匹配区域得分折扣 (1.0=不打折) |
 | `--dense-mismatch-window` | 6 | 6 | 密集错配检测窗口 (bp) |
-| `--dense-mismatch-penalty` | 0.0 | -2.0 | 密集错配区域额外惩罚，0=关闭 |
+| `--dense-mismatch-penalty` | 0.0 | -2.0 | 密集错配区域额外惩罚，0=关闭（≤0） |
 | `--homology-window` | 8 | 8 | 同源区域检测窗口 (bp) |
-| `--homology-penalty` | 0.0 | -1.0 | 同源区域惩罚，0=关闭 |
-| `--isolated-base-penalty` | 0.0 | -2.0 | 孤立碱基匹配惩罚，0=关闭 |
-
-**矫正管线控制：**
-
-| Option | Effect / 效果 |
-|--------|--------|
-| `--repeat-correction-mode` | `auto`（默认）、`hardcoded` 或 `off` |
-| `--disable-target-misalignment` | 关闭 TAGTAT / 单碱基 A 的跨靶点矫正 |
-| `--disable-isolated-match-removal` | 保留切割 deletion 的孤立匹配 |
-| `--disable-dense-mismatch-correction` | 关闭后处理密集错配→indel 转换 |
-| `--disable-point-mutation-filtering` | 保留所有点突变，不按位置过滤 |
+| `--homology-penalty` | 0.0 | -1.0 | 同源区域惩罚，0=关闭（≤0） |
+| `--isolated-base-penalty` | 0.0 | -2.0 | 孤立碱基匹配惩罚，0=关闭（≤0） |
 
 **引物参数：**
 
@@ -206,13 +197,22 @@ ACGTACGT...
 | `--primer5-threshold` | 19 | 5' 引物匹配碱基数阈值 |
 | `--primer3-threshold` | 29 | 3' 引物匹配碱基数阈值 |
 
+**Allele 过滤参数：**
+
+| Option | Default | Description / 说明 |
+|--------|---------|-------------|
+| `--min-reads` | 1 | 输入侧最小 read 数阈值（预处理过滤用） |
+| `--min-reads-sub` | 5 | 纯点突变 allele 最小 read 数阈值（exclusive，>此值通过） |
+| `--min-reads-indel` | 0 | 含 indel 的 allele 最小 read 数阈值（0=不过滤） |
+| `--correct-bg-sub` | on | 启用背景点突变矫正 |
+| `--keep-sub-indel-window` | 3 | 背景矫正时 indel 邻近保留窗口 (bp) |
+
 **报告选项：**
 
 | Option | Default | Description / 说明 |
 |--------|---------|-------------|
 | `--report` | — | 生成报告：`json` 或 `html` |
 | `--report-output` | auto | 报告路径（默认从 `--output` 推断） |
-| `--min-reads` | 1 | allele 过滤的最小 read 数 |
 | `--allele-top-n` | 50 | 报告中展示的 top N alleles |
 | `--allele-window-start` | 0 | Allele 热图显示起始位置 |
 | `--allele-window-end` | auto | Allele 热图显示结束位置（含） |
@@ -245,7 +245,6 @@ ACGTACGT...
     "similarity": 0.982,
     "identity": 1.0,
     "has_mutation": true,
-    "n_mutations_corrected": 1,
     "dense_regions_converted": false
   }
 }
@@ -257,7 +256,20 @@ ACGTACGT...
 
 ### HTML report / 分析报告
 
-`--report html` 生成的 HTML 报告包含：摘要统计、突变类型条形图、长度分布、top allele 表和每条突变序列的突变标签。所有 JavaScript 内联，无外部依赖，离线可用。
+`--report html` 生成的 HTML 报告包含：摘要统计、突变类型条形图、长度分布、top allele 表、等位基因热图和每条突变序列的突变标签。所有 JavaScript 内联，无外部依赖，离线可用。
+
+### Summary tables / 总结表格
+
+运行完成后（`--format all` 或默认 JSON 输出），在输出目录下自动生成 6 个 TSV 表格：
+
+| 文件 | 内容 |
+|------|------|
+| `allele_frequency.tsv` | 按突变指纹聚合的 Allele 频率表：Rank, Allele, Mutation_Type, Sequences, Reads, Reads_Pct |
+| `per_target_editing.tsv` | 每个 Target 的编辑类型统计：Total, Edited, Rate_Pct, Del, Ins, Sub, Avg_Mut_Length（使用 20bp 窗口） |
+| `filter_reason.tsv` | 序列丢弃原因统计：Reason, Sequences, Reads |
+| `deletion_length.tsv` | Deletion 长度分布（按事件长度分组）：Length_bp, Events, Reads, Reads_Pct |
+| `insertion_length.tsv` | Insertion 长度分布：Length_bp, Events, Reads, Reads_Pct |
+| `event_level_details.tsv` | 事件级统计：每个突变事件一行，记录 Type, Start_Pos, End_Pos, Length, Affected_Targets, N_Targets, Target_Range, Sequences, Reads |
 
 ---
 
@@ -266,10 +278,11 @@ ACGTACGT...
 | 问题 | 调整方法 |
 |---------|-----------|
 | 假阳性 indel 过多 | 增大 `--gap-open`（如 -3.0 → -4.0） |
-| 遗漏真实 indel | 降低 `--cutsite-scale`（如 1.0 → 0.8） |
-| 保守区假阳性点突变 | 增大 `--far-scale`（如 6.0 → 10.0） |
-| Indel 被短 match 碎片化 | 开启 `--gap-exit-bonus -1.0` |
+| 遗漏真实 indel | 降低 `--min-scale`（如 1.0 → 0.8） |
+| 保守区假阳性点突变 | 增大 `--max-scale`（如 6.0 → 10.0） |
+| Indel 被短 match 碎片化 | 开启 `--gap-exit-strength -1.0` |
 | 重复序列匹配到错误副本 | 开启 `--homology-penalty -1.0` |
+| 纯点突变 allele 假阳性过多 | 增大 `--min-reads-sub`（如 5 → 10） |
 
 ### 常用预设
 
@@ -280,12 +293,12 @@ ACGTACGT...
 
 **多靶点谱系（默认）：**
 ```
---lineage --cutsite-scale 1.0 --flank-scale 2.0 --far-scale 6.0 --mutation-window 3
+--lineage --min-scale 1.0 --cutsite-edge-scale 2.0 --max-scale 6.0 --sub-window 3
 ```
 
 **多靶点谱系（严格，更低假阳性）：**
 ```
---lineage --far-scale 10.0 --mutation-window 2 --density-threshold 0.40
+--lineage --max-scale 10.0 --sub-window 2 --mismatch-density-threshold 0.40 --min-reads-sub 10
 ```
 
 ---

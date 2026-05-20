@@ -150,7 +150,7 @@ class TestEndToEndPipeline:
             primer3_len=33,
             primer5_threshold=19,
             primer3_threshold=29,
-            min_reads_snv=10,
+            min_reads_sub=10,
             min_reads_indel=3,
             threads=1,
         )
@@ -195,11 +195,11 @@ class TestEndToEndPipeline:
         assert "sub_in_window" in names
 
     def test_snv_low_rc_filtered(self):
-        """点突变+低readCount应通过（假阳性过滤已移除）"""
+        """点突变+低readCount应被过滤"""
         result = self._run_pipeline()
         successful = result.get_successful()
         successful_names = [r.query.readName for r in successful]
-        assert "sub_low_rc" in successful_names
+        assert "sub_low_rc" not in successful_names
 
     def test_mutations_detected_in_results(self):
         """成功比对的结果应包含突变事件"""
@@ -318,7 +318,7 @@ class TestEndToEndPipeline:
             lineage_mode=False,
             primer5_len=23,
             primer3_len=33,
-            min_reads_snv=10,
+            min_reads_sub=10,
             min_reads_indel=3,
             threads=1,
         )
@@ -345,6 +345,6 @@ class TestEndToEndPipeline:
                                    for m in r.mutations)
                 if not has_deletion:
                     # 可能被合并为complex
-                    has_complex = any(m.type == MutationType.COMPLEX
+                    has_indel = any(m.type == MutationType.INDEL
                                       for m in r.mutations)
-                    assert has_complex or not r.stats.has_indel
+                    assert has_indel or not r.stats.has_indel

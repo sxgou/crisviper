@@ -47,23 +47,6 @@ def _img_to_b64(fig) -> str:
     return img_b64
 
 
-def _gen_reads_distribution(results: List[Dict]) -> str:
-    """Reads数分布直方图"""
-    read_counts = [r.get("readCount", 1) for r in results]
-    if not read_counts:
-        return ""
-    fig, ax = plt.subplots(figsize=(6, 3))
-    max_rc = max(read_counts)
-    bins = min(50, max_rc) if max_rc > 1 else 1
-    ax.hist(read_counts, bins=bins, color='#4a6cf7', edgecolor='white', alpha=0.8)
-    ax.set_xlabel('Reads per Unique Sequence')
-    ax.set_ylabel('Sequence Count')
-    ax.set_title('Reads Count Distribution')
-    ax.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
-    fig.tight_layout()
-    return _img_to_b64(fig)
-
-
 def _gen_alignment_rate(results: List[Dict]) -> str:
     """比对成功率饼图"""
     successful = sum(1 for r in results if "error" not in r)
@@ -85,33 +68,52 @@ def _gen_alignment_rate(results: List[Dict]) -> str:
     return _img_to_b64(fig)
 
 
-def _gen_length_distribution(results: List[Dict], ref_length: int = 0) -> str:
-    """查询序列长度分布直方图"""
+def _gen_length_distribution(results: List[Dict], ref_length: int = 0,
+                              weight_by_reads: bool = False) -> str:
+    """查询序列长度分布直方图（以reads或sequence计数）
+
+    参数:
+        weight_by_reads: True时以reads数量加权统计
+    """
     lengths = []
+    weights = []
     for r in results:
         if "error" in r:
             continue
-        seq = r.get("seq", "")
-        if seq:
-            lengths.append(len(seq))
+        rc = r.get("readCount", 1)
+        aq = r.get("aligned_query", "")
+        if aq:
+            l = len(aq) - aq.count('-')
+            lengths.append(l)
+            if weight_by_reads:
+                weights.append(rc)
         else:
             stats = r.get("stats")
             if not stats:
                 continue
             alen = stats.get("alignment_length", 0)
             if alen:
-                lengths.append(int(alen))
+                l = int(alen)
+                lengths.append(l)
+                if weight_by_reads:
+                    weights.append(rc)
     if not lengths:
         return ""
+
+    n_total = sum(weights) if weight_by_reads else len(lengths)
     fig, ax = plt.subplots(figsize=(6, 3))
     bins = min(30, max(lengths) - min(lengths) + 1) if max(lengths) > min(lengths) else 1
-    ax.hist(lengths, bins=bins, color='#20c997', edgecolor='white', alpha=0.8)
+    hist_kw = dict(bins=bins, color='#20c997', edgecolor='white', alpha=0.8)
+    if weight_by_reads:
+        hist_kw['weights'] = weights
+    ax.hist(lengths, **hist_kw)
     if ref_length > 0:
         ax.axvline(ref_length, color='#dc3545', linestyle='--', linewidth=1.5, label=f'Ref ({ref_length}bp)')
         ax.legend(fontsize=9)
+    ylbl = 'Reads' if weight_by_reads else 'Sequences'
     ax.set_xlabel('Sequence Length (bp)')
-    ax.set_ylabel('Count')
-    ax.set_title('Sequence Length Distribution')
+    ax.set_ylabel(f'{ylbl} (count)')
+    ax.set_title(f'Sequence Length Distribution ({ylbl.lower()})')
     ax.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
     fig.tight_layout()
     return _img_to_b64(fig)
@@ -196,34 +198,51 @@ def _gen_mutation_type_chart(report_data: dict) -> str:
 
 
 def _gen_indel_length_chart(report_data: dict) -> str:
-    """Insertion和Deletion长度分布直方图并排"""
+    """蝴蝶图：Insertion向上，Deletion向下的diverging bar chart (Reads加权, 百分比Y轴)"""
     ms = report_data.get("mutation_stats", {})
-    ins_len = ms.get("avg_insertion_length", 0)
-    del_len = ms.get("avg_deletion_length", 0)
-    max_ins = ms.get("max_insertion_length", 0)
-    max_del = ms.get("max_deletion_length", 0)
+    ins_counts = ms.get("all_insertion_lengths_reads", {})
+    del_counts = ms.get("all_deletion_lengths_reads", {})
+    if not ins_counts and not del_counts:
+        from collections import Counter
+        ins_raw = ms.get("all_insertion_lengths", [])
+        del_raw = ms.get("all_deletion_lengths", [])
+        if not ins_raw and not del_raw:
+            return ""
+        ins_counts = Counter(ins_raw)
+        del_counts = Counter(del_raw)
+    else:
+        ins_counts = {int(k): v for k, v in ins_counts.items()}
+        del_counts = {int(k): v for k, v in del_counts.items()}
 
-    ins_lengths = ms.get("all_insertion_lengths", [])
-    del_lengths = ms.get("all_deletion_lengths", [])
-    if not ins_lengths and not del_lengths:
-        return ""
+    all_keys = list(ins_counts.keys()) + list(del_counts.keys())
+    max_len = min(max(all_keys) if all_keys else 1, 50)
+    all_lengths = list(range(1, max_len + 1))
+    ins_raw_vals = [ins_counts.get(l, 0) for l in all_lengths]
+    del_raw_vals = [del_counts.get(l, 0) for l in all_lengths]
 
-    def _do_hist(ax, lengths, color, title, avg, maxv):
-        if lengths:
-            max_len = max(lengths)
-            bins = min(max_len, 50)
-            ax.hist(lengths, bins=bins, color=color, edgecolor='white', alpha=0.8)
-            ax.set_xlabel('Length (bp)'); ax.set_ylabel('Count')
-            ax.set_title(f'{title} (avg={avg:.1f}bp, max={maxv}bp)')
-            ax.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
-        else:
-            ax.text(0.5, 0.5, f'No {title.lower()}', ha='center', va='center',
-                    transform=ax.transAxes)
-            ax.set_title(title)
+    total_ins = sum(ins_counts.values())
+    total_del = sum(del_counts.values())
+    # 转为百分比
+    ins_pct = [v / total_ins * 100 if total_ins else 0 for v in ins_raw_vals]
+    del_pct = [-v / total_del * 100 if total_del else 0 for v in del_raw_vals]
 
-    fig, axes = plt.subplots(1, 2, figsize=(8, 3.5))
-    _do_hist(axes[0], ins_lengths, '#20c997', 'Insertion', ins_len, max_ins)
-    _do_hist(axes[1], del_lengths, '#ff6b6b', 'Deletion', del_len, max_del)
+    max_pct = max(max(ins_pct) if ins_pct else 0, max(abs(x) for x in del_pct) if del_pct else 0)
+    y_lim = max(10, ((max_pct // 10) + 1) * 10)  # 以10为单位向上取整
+
+    fig, ax = plt.subplots(figsize=(8, 3.5))
+    ax.bar(all_lengths, ins_pct, color='#20c997', width=0.8,
+           label=f'Insertion ({total_ins} reads)')
+    ax.bar(all_lengths, del_pct, color='#ff6b6b', width=0.8,
+           label=f'Deletion ({total_del} reads)')
+    ax.axhline(0, color='#333', linewidth=0.5)
+    ax.set_xlabel('Indel Length (bp)')
+    ax.set_ylabel('Reads (%)')
+    ax.set_title('Indel Length Distribution (Butterfly Chart)')
+    ax.set_xticks(all_lengths)
+    ax.set_ylim(-y_lim, y_lim)
+    ax.set_yticks(range(-int(y_lim), int(y_lim) + 1, 10))
+    ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{int(abs(x))}%'))
+    ax.legend(fontsize=9, loc='upper right')
     fig.tight_layout()
     return _img_to_b64(fig)
 
@@ -369,26 +388,89 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
     top_alleles = sorted_alleles[:top_n]
     total_reads = sum(allele_counts.values())
 
-    # 3. 从对齐序列中提取窗口碱基
-    # 使用原始参考序列（无gap）确定列数，避免矫正管线引入的gap干扰坐标映射
-    n_cols = window_len
+    # 3. Insertion感知的显示列构建
     window_ref_bases = ref_seq[window_start:window_end + 1]
+    n_cols = window_len  # 参考序列列数
 
-    def _extract_window_bases(aligned_ref, aligned_query):
-        """通过对齐列遍历（跳过ref gap列）提取窗口各位置对应的碱基。"""
-        result = []
+    def _build_display_with_insertions(aligned_ref, aligned_query):
+        """构建包含insertion的显示列（ref不开gap，query顺移展示插入碱基）。
+
+        遍历比对列，参考碱基占一列，插入碱基（ref为gap但query有碱基时）
+        额外占一列，后续碱基顺移。返回：
+            seq:      每列对应的query碱基列表（长度 >= window_len）
+            ref:      每列对应的ref碱基（''表示insertion列）
+            ins_blocks: [(start, end), ...] 插入块的列范围
+            width:    总显示列数
+        """
+        seq = []
+        ref = []
+        ins_blocks = []
         ref_pos = 0
-        for col, c in enumerate(aligned_ref):
-            if c != '-':
+        col = 0
+        in_ins = False
+        ins_start = 0
+        for rb, qb in zip(aligned_ref, aligned_query):
+            if rb != '-':   # ref有碱基 → 正常列
+                if in_ins:
+                    ins_blocks.append((ins_start, col - 1))
+                    in_ins = False
                 if window_start <= ref_pos <= window_end:
-                    base = aligned_query[col] if col < len(aligned_query) else '-'
-                    result.append(base)
+                    seq.append(qb)
+                    ref.append(rb)
+                    col += 1
                 ref_pos += 1
                 if ref_pos > window_end:
                     break
-        while len(result) < n_cols:
-            result.append('-')
-        return ''.join(result[:n_cols])
+            elif qb != '-':  # ref为gap、query有碱基 → insertion列
+                if window_start <= ref_pos <= window_end:
+                    if not in_ins:
+                        ins_start = col
+                        in_ins = True
+                    seq.append(qb)
+                    ref.append('')
+                    col += 1
+        if in_ins:
+            ins_blocks.append((ins_start, col - 1))
+        # 填充至至少window_len个ref列
+        ref_cnt = sum(1 for r in ref if r != '')
+        while ref_cnt < window_len:
+            seq.append('-')
+            ref.append('')
+            col += 1
+            ref_cnt += 1
+        return seq, ref, ins_blocks, col
+
+    # 预计算所有allele行的显示列，截断至n_cols
+    row_data = []  # [(seq, ref, ins_blocks, readCount), ...]
+    for internal_key, total_rc in top_alleles:
+        ad = allele_data.get(internal_key, {})
+        ar = ad.get("aligned_ref", "")
+        aq = ad.get("aligned_query", "")
+        if ar and aq:
+            sq, rf, blk, w = _build_display_with_insertions(ar, aq)
+        else:
+            sq = list(window_ref_bases)
+            rf = list(window_ref_bases)
+            blk = []
+            w = len(sq)
+        # 截断至n_cols，超出reference长度的部分丢弃
+        if len(sq) > n_cols:
+            # 修正insertion块坐标：丢弃超出n_cols的部分
+            clipped_blk = []
+            for start, end in blk:
+                if start >= n_cols:
+                    continue
+                clipped_blk.append((start, min(end, n_cols - 1)))
+            sq = sq[:n_cols]
+            rf = rf[:n_cols]
+            blk = clipped_blk
+        # 填充至n_cols（短于参考序列的补gap）
+        while len(sq) < n_cols:
+            sq.append('-')
+            rf.append('')
+        row_data.append((sq, rf, blk, total_rc))
+
+    grid_cols = n_cols  # 固定为参考序列列数
 
     # 4. 碱基配色
     base_colors = {
@@ -401,14 +483,14 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
 
     n_rows = len(top_alleles)
 
-    # 5. 自适应单元格尺寸
-    if window_len > 200:
+    # 5. 自适应单元格尺寸（基于原始参考列数）
+    if n_cols > 200:
         cell_size = 10
         font_size = 5.5
-    elif window_len > 100:
+    elif n_cols > 100:
         cell_size = 14
         font_size = 6.5
-    elif window_len > 60:
+    elif n_cols > 60:
         cell_size = 18
         font_size = 7
     else:
@@ -416,7 +498,7 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
         font_size = 9
 
     label_w = 180  # 右侧标注宽度(px)
-    fig_w_px = n_cols * cell_size + label_w
+    fig_w_px = grid_cols * cell_size + label_w
     fig_h_px = (n_rows + 5.0) * cell_size
 
     dpi = 100
@@ -424,23 +506,26 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
     fig_h = max(3, fig_h_px / dpi)
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-    ax.set_xlim(0, n_cols)
+    ax.set_xlim(0, grid_cols)
     ax.set_ylim(-2.5, n_rows + 2.5)
     ax.set_aspect('equal')
     ax.axis('off')
 
-    # 6. 参考序列行
+    # 6. 参考序列行（grid_cols列，超出n_cols部分留白）
     ref_y = n_rows + 1.5
-    for ci in range(n_cols):
-        base = window_ref_bases[ci] if ci < len(window_ref_bases) else ' '
-        x = ci + 0.5
-        color = base_colors.get(base, '#e9e9e9')
-        ax.add_patch(plt.Rectangle((ci, ref_y - 0.5), 1, 1,
-                                    facecolor=color, edgecolor='white', linewidth=0.3))
-        ax.text(x, ref_y, base, ha='center', va='center',
-                fontsize=font_size, fontweight='normal')
+    for ci in range(grid_cols):
+        if ci < n_cols:
+            base = window_ref_bases[ci] if ci < len(window_ref_bases) else ' '
+            color = base_colors.get(base, '#e9e9e9')
+            ax.add_patch(plt.Rectangle((ci, ref_y - 0.5), 1, 1,
+                                        facecolor=color, edgecolor='white', linewidth=0.3))
+            ax.text(ci + 0.5, ref_y, base, ha='center', va='center',
+                    fontsize=font_size, fontweight='normal')
+        else:
+            ax.add_patch(plt.Rectangle((ci, ref_y - 0.5), 1, 1,
+                                        facecolor='white', edgecolor='white', linewidth=0))
 
-    # 标注cutsite区域（灰色半透明方框）
+    # 标注cutsite区域（灰色半透明方框，基于参考坐标n_cols）
     if cutsites:
         for cs in cutsites:
             if cs.start > window_end or cs.end < window_start:
@@ -455,10 +540,8 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
 
     # 8. sgRNA区域示意（半高灰色方块，紧贴reference下方）
     if cutsites:
-        # 建立 ref_pos → display column 映射（基于无gap的参考序列坐标）
         ref_pos_to_col = {rp: rp - window_start for rp in range(window_start, window_end + 1)}
-
-        grna_y = ref_y - 0.75  # 半高行中心
+        grna_y = ref_y - 0.75
         for cs in cutsites:
             if not cs.name.startswith("Target"):
                 continue
@@ -470,42 +553,32 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
             col1 = ref_pos_to_col.get(min(tgt_end, window_end))
             if col0 is None or col1 is None:
                 continue
-            # 绘制灰色方块
             ax.add_patch(plt.Rectangle(
                 (col0, grna_y - 0.3), col1 - col0 + 1, 0.6,
                 facecolor='#bbbbbb', edgecolor='#999999', linewidth=0.3, zorder=0
             ))
-            # 在前方标注Target名称
             ax.text(col0 - 0.1, grna_y, cs.name.replace('Target', 'T'),
                     ha='right', va='center', fontsize=max(6, font_size - 0.5),
                     color='#666', fontweight='bold')
 
-    # 7. Allele行
-    for ai, (internal_key, total_rc) in enumerate(top_alleles):
+    # 7. Allele行（使用扩展显示列，insertion用红色框标出）
+    ins_box_color = '#e94560'
+    for ai, (sq, rf, blk, total_rc) in enumerate(row_data):
         y = n_rows - 1 - ai
-        ad = allele_data.get(internal_key, {})
-        full_aligned_ref = ad.get("aligned_ref", "")
-        full_aligned_query = ad.get("aligned_query", "")
 
-        # 显示全长对齐序列（含引物），按窗口裁剪
-        win_bases = _extract_window_bases(full_aligned_ref, full_aligned_query) if full_aligned_ref and full_aligned_query else ""
-        win_ref_b = window_ref_bases
+        # 隔行背景色
+        if ai % 2 == 1:
+            ax.add_patch(plt.Rectangle((0, y - 0.5), grid_cols, 1,
+                                        facecolor='#f8f8f8', edgecolor=None, zorder=0))
 
-        while len(win_bases) < n_cols:
-            win_bases += '-'
-        while len(win_ref_b) < n_cols:
-            win_ref_b += '-'
-        win_bases = win_bases[:n_cols]
-        win_ref_b = win_ref_b[:n_cols]
-
-        for ci in range(n_cols):
-            base = win_bases[ci]
-            ref_base = win_ref_b[ci]
+        for ci in range(grid_cols):
+            base = sq[ci] if ci < len(sq) else '-'
+            ref_base = rf[ci] if ci < len(rf) else ''
             is_del = (base == '-')
-            is_ins = (base != '-' and ref_base == '-')
-            is_sub = (not is_del and not is_ins and base != ref_base)
+            is_ins_col = (ref_base == '')
+            is_sub = (not is_del and not is_ins_col and base != ref_base)
 
-            if is_ins:
+            if is_ins_col:
                 color = '#ffcccc'
             elif is_del:
                 color = '#f0f0f0'
@@ -514,25 +587,27 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
 
             ax.add_patch(plt.Rectangle((ci, y - 0.5), 1, 1,
                                         facecolor=color, edgecolor='white', linewidth=0.2))
-
-            if is_ins:
+            if is_ins_col:
                 ax.text(ci + 0.5, y, base, ha='center', va='center',
                         fontsize=font_size, color='red', fontweight='bold')
-                ax.add_patch(plt.Rectangle(
-                    (ci, y - 0.5), 1, 1,
-                    facecolor='none', edgecolor='red', linewidth=1.2, zorder=5
-                ))
             elif is_del:
                 ax.text(ci + 0.5, y, '-', ha='center', va='center',
                         fontsize=font_size, color='#666', fontweight='bold')
             else:
-                w = 'bold' if is_sub else 'normal'
+                wgt = 'bold' if is_sub else 'normal'
                 ax.text(ci + 0.5, y, base, ha='center', va='center',
-                        fontsize=font_size, fontweight=w)
+                        fontsize=font_size, fontweight=wgt)
+
+        # 红色框标记整体insertion块
+        for start, end in blk:
+            ax.add_patch(plt.Rectangle(
+                (start, y - 0.5), end - start + 1, 1,
+                facecolor='none', edgecolor=ins_box_color, linewidth=1.5, zorder=5
+            ))
 
         # 右侧label
         pct = total_rc / total_reads * 100
-        ax.text(n_cols + 0.3, y, f"{pct:.1f}% ({total_rc})",
+        ax.text(grid_cols + 0.3, y, f"{pct:.1f}% ({total_rc})",
                 ha='left', va='center', fontsize=max(8, font_size + 1))
 
     # 图例
@@ -547,8 +622,413 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
         ax.text(lx + 0.9, lgy, label, ha='left', va='center', fontsize=leg_font)
         lx += 2.2
 
-    ax.set_title(f'Top {top_n} Alleles — ref {window_start + 1}–{window_end + 1}bp ({window_len}bp)',
+    ax.set_title(f'Top {top_n} Alleles — ref {window_start + 1}–{window_end + 1}bp ({n_cols}bp)',
                  fontsize=max(10, font_size + 3), pad=4)
+    fig.tight_layout()
+    return _img_to_b64(fig)
+
+
+def _gen_per_target_stacked_bar(results: List[Dict], cutsites: list) -> str:
+    """Per-target stacked bar: each bar split by mutation type (reads-weighted)."""
+    if not results or not cutsites:
+        return ""
+
+    target_names = [cs.name for cs in cutsites if cs.name.startswith("Target")]
+    n_targets = len(target_names)
+    if n_targets == 0:
+        return ""
+
+    categories = ["Unedited", "Substitution", "Insertion", "Deletion", "Indel"]
+    n_cats = len(categories)
+    data = [[0] * n_cats for _ in range(n_targets)]
+    total_reads = [0] * n_targets
+
+    successful = [r for r in results if "error" not in r]
+
+    for ti, cs in enumerate(cutsites):
+        if not cs.name.startswith("Target"):
+            continue
+        cs_lo, cs_hi = cs.start - 13, cs.end
+        for r in successful:
+            ar = r.get("aligned_ref", "")
+            if not ar:
+                continue
+            rc = r.get("readCount", 1)
+
+            # --- Coverage check ---
+            ref_bases = sum(1 for c in ar if c != '-')
+            covers = ref_bases > cs.start
+            for m in r.get("mutations", []):
+                mp = m.get("ref_pos", -1)
+                ml = m.get("length", 1)
+                mt = m.get("type", "")
+                if mt in ("deletion", "indel"):
+                    if mp <= cs_hi and (mp + ml - 1) >= cs_lo:
+                        covers = True
+                        break
+                elif cs_lo <= mp <= cs_hi:
+                    covers = True
+                    break
+            if not covers:
+                continue
+
+            total_reads[ti] += rc
+
+            # --- Classify mutation types independently ---
+            has_del = has_ins = has_sub = has_indel = False
+            for m in r.get("mutations", []):
+                mp = m.get("ref_pos", -1)
+                mt = m.get("type", "")
+                if mt == "indel":
+                    if mp <= cs_hi and (mp + m.get("length", 1) - 1) >= cs_lo:
+                        has_indel = True
+                elif cs_lo <= mp <= cs_hi:
+                    if mt == "deletion":
+                        has_del = True
+                    elif mt == "insertion":
+                        has_ins = True
+                    elif mt == "substitution":
+                        has_sub = True
+
+            # Count each type independently (one read can contribute to multiple)
+            if has_indel:
+                data[ti][4] += rc
+            if has_del:
+                data[ti][3] += rc
+            if has_ins:
+                data[ti][2] += rc
+            if has_sub:
+                data[ti][1] += rc
+            if not (has_indel or has_del or has_ins or has_sub):
+                data[ti][0] += rc
+
+    # Normalize by total reads per target (not sum of categories)
+    pct_data = []
+    for row, total in zip(data, total_reads):
+        pct_data.append([v / total * 100 if total else 0 for v in row])
+
+    fig, ax = plt.subplots(figsize=(7, 3.5))
+    x = range(n_targets)
+    bar_w = 0.12
+    offsets = [-2 * bar_w, -bar_w, 0, bar_w, 2 * bar_w]
+    colors = ['#e6e6e6', '#ffd43b', '#4a6cf7', '#ff6b6b', '#e94560']
+
+    for ci, (color, label, offset) in enumerate(zip(colors, categories, offsets)):
+        vals = [pct_data[ti][ci] for ti in range(n_targets)]
+        bars = ax.bar([xi + offset for xi in x], vals, bar_w,
+                      color=color, label=label, edgecolor='white', linewidth=0.3)
+        for ti in range(n_targets):
+            if vals[ti] > 4:
+                ax.text(ti + offset, vals[ti] + 1.5,
+                        f'{vals[ti]:.0f}%', ha='center', va='bottom',
+                        fontsize=6, color='#333', fontweight='bold')
+
+    for ti in range(n_targets):
+        ax.text(ti, -5, f'n={total_reads[ti]}',
+                ha='center', va='top', fontsize=7, color='#888')
+
+    ax.set_xticks(list(x))
+    ax.set_xticklabels([cs.name.replace('Target', 'T') for cs in cutsites
+                        if cs.name.startswith('Target')], fontsize=8)
+    ax.set_ylabel('Reads (%)')
+    ax.set_title('Per-Target Editing Type Distribution (not mutually exclusive)')
+    ax.set_ylim(-10, 105)
+    ax.legend(fontsize=7, loc='upper right')
+    fig.tight_layout()
+    return _img_to_b64(fig)
+
+
+def _gen_mutation_segment_plot(results: List[Dict], ref_seq: str,
+                                cutsites: list = None, top_n: int = 50) -> str:
+    """Mutation segment plot: per-allele horizontal view of indels and substitutions."""
+    if not results or not ref_seq:
+        return ""
+
+    ref_len = len(ref_seq)
+
+    # 1. Aggregate alleles
+    allele_data = {}
+    for r in results:
+        if "error" in r:
+            continue
+        aq = r.get("aligned_query", "")
+        ar = r.get("aligned_ref", "")
+        rc = r.get("readCount", 1)
+        if not aq or not ar:
+            continue
+        if ar not in allele_data:
+            allele_data[ar] = {"aq": aq, "ar": ar, "rc": 0}
+        allele_data[ar]["rc"] += rc
+    sorted_alleles = sorted(allele_data.values(), key=lambda x: -x["rc"])
+    top = sorted_alleles[:top_n]
+
+    # 2. Extract segments per allele
+    rows = []
+    for ad in top:
+        ar, aq, rc = ad["ar"], ad["aq"], ad["rc"]
+        del_segs, ins_segs, sub_positions = [], [], []
+        ref_pos = 0
+        i = 0
+        while i < len(ar):
+            if ar[i] != '-' and aq[i] == '-':            # deletion
+                start = ref_pos
+                while i < len(ar) and ar[i] != '-' and aq[i] == '-':
+                    i += 1; ref_pos += 1
+                del_segs.append((start, ref_pos - 1))
+            elif ar[i] == '-' and aq[i] != '-':           # insertion
+                ins_pos = ref_pos
+                j = i
+                while j < len(ar) and ar[j] == '-' and aq[j] != '-':
+                    j += 1
+                ins_segs.append((ins_pos, ins_pos))
+                i = j
+            else:
+                if ar[i] != '-' and aq[i] != '-' and ar[i] != aq[i]:  # substitution
+                    sub_positions.append(ref_pos)
+                if ar[i] != '-':
+                    ref_pos += 1
+                i += 1
+        rows.append((rc, del_segs, ins_segs, sub_positions))
+
+    if not rows:
+        return ""
+
+    n_rows = len(rows)
+    row_h = 0.55  # half the original height
+    fig_h = max(3, n_rows * row_h + 1.5)
+    fig, ax = plt.subplots(figsize=(12, fig_h))
+    ax.set_xlim(-2, ref_len + 22)
+    ax.set_ylim(-1.8, n_rows + 0.8)
+    ax.set_xlabel('Reference Position (bp)')
+    ax.set_ylabel('Top Alleles')
+    ax.set_title(f'Mutation Segment Plot (Top {n_rows} Alleles by Read Count)')
+    ax.yaxis.set_ticks([])
+
+    for ri, (rc, del_segs, ins_segs, sub_positions) in enumerate(rows):
+        y = n_rows - 1 - ri
+
+        # Alternating row background
+        if ri % 2 == 1:
+            ax.axhspan(y - row_h / 2, y + row_h / 2, color='#f8f8f8', zorder=0)
+
+        # Gray gRNA targets
+        for cs in cutsites or []:
+            if not cs.name.startswith("Target"):
+                continue
+            rect = plt.Rectangle((cs.start, y - row_h / 2 + 0.05),
+                                 cs.end - cs.start + 1, row_h - 0.1,
+                                 facecolor='#e0e0e0', alpha=0.4, edgecolor=None, zorder=1)
+            ax.add_patch(rect)
+
+        # Draw in order: insertion → deletion (on top) → substitution (on top)
+        # Insertion markers (blue diamonds, lowest zorder)
+        for pos, _ in ins_segs:
+            ax.plot(pos, y, marker='D', color='#4a6cf7', markersize=5,
+                    linewidth=0, zorder=2)
+
+        # Deletion segments (red, drawn on top of insertions)
+        for s, e in del_segs:
+            ax.plot([s, e], [y, y], color='#ff6b6b', linewidth=4,
+                    solid_capstyle='round', zorder=3)
+
+        # Substitution point mutations (black asterisks, topmost)
+        for pos in sub_positions:
+            ax.plot(pos, y, marker='*', color='black', markersize=8,
+                    linewidth=0, zorder=4)
+
+        # Label
+        ax.text(ref_len + 2, y, f'{ri+1}. ({rc})', ha='left', va='center',
+                fontsize=7, color='#666')
+
+    # Reference line
+    ax.axhline(y=-0.5, color='#333', linewidth=0.5)
+
+    # Legend
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], color='#ff6b6b', linewidth=3, label='Deletion'),
+        Line2D([0], [0], marker='D', color='#4a6cf7', label='Insertion',
+               markersize=6, linewidth=0),
+        Line2D([0], [0], marker='*', color='black', label='Substitution',
+               markersize=8, linewidth=0),
+        plt.Rectangle((0, 0), 1, 1, facecolor='#e0e0e0', alpha=0.4, label='gRNA Target'),
+    ]
+    ax.legend(handles=legend_elements, loc='lower left', bbox_to_anchor=(0, -0.9),
+              ncol=4, fontsize=8, framealpha=0.8)
+
+    fig.tight_layout()
+    return _img_to_b64(fig)
+
+
+def _gen_cross_target_chord(results: List[Dict], cutsites: list) -> str:
+    """Chord diagram: circular links showing deletions spanning multiple targets."""
+    if not results or not cutsites:
+        return ""
+
+    target_names = [cs.name for cs in cutsites if cs.name.startswith("Target")]
+    n_targets = len(target_names)
+    if n_targets < 2:
+        return ""
+
+    from matplotlib.path import Path
+    import matplotlib.patches as mpatches
+
+    target_ranges = [(cs.start - 13, cs.end) for cs in cutsites if cs.name.startswith("Target")]
+
+    # 1. Collect cross-target events
+    cross_counts = {}
+    successful = [r for r in results if "error" not in r]
+    for r in successful:
+        ar = r.get("aligned_ref", "")
+        rc = r.get("readCount", 1)
+        if not ar:
+            continue
+        for m in r.get("mutations", []):
+            mt = m.get("type", "")
+            mp = m.get("ref_pos", -1)
+            ml = m.get("length", 1)
+            if mt == "deletion":
+                event_end = mp + ml - 1
+            elif mt == "indel":
+                event_end = mp + ml - 1
+            elif mt == "insertion":
+                event_end = mp
+            else:
+                continue
+            affected = []
+            for ti, (ts, te) in enumerate(target_ranges):
+                if max(mp, ts) <= min(event_end, te):
+                    affected.append(ti)
+            if len(affected) >= 2:
+                for a in range(len(affected)):
+                    for b in range(a + 1, len(affected)):
+                        t1, t2 = sorted((affected[a], affected[b]))
+                        key = (t1, t2, mt)
+                        cross_counts[key] = cross_counts.get(key, 0) + rc
+
+    if not cross_counts:
+        return ""
+
+    # 2. Cartesian layout
+    angles = np.linspace(0, 2 * np.pi, n_targets, endpoint=False)
+    gap = 0.02  # gap between target sectors (ratio of circumference)
+    inner_r = 0.25
+    outer_r = 1.0
+    arc_span = (2 * np.pi / n_targets) * (1 - gap)
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.set_xlim(-1.4, 1.4)
+    ax.set_ylim(-1.4, 1.4)
+    ax.set_aspect('equal')
+    ax.axis('off')
+
+    # Draw target arcs
+    for ti in range(n_targets):
+        a0 = angles[ti] - arc_span / 2
+        a1 = angles[ti] + arc_span / 2
+        theta = np.linspace(a0, a1, 40)
+
+        # Outer arc
+        ax.plot(np.cos(theta) * outer_r, np.sin(theta) * outer_r,
+                color='#333', linewidth=2, zorder=3)
+        # Fill sector
+        fill_theta = np.linspace(a0, a1, 20)
+        for ft in fill_theta:
+            ax.plot([np.cos(ft) * inner_r, np.cos(ft) * outer_r],
+                    [np.sin(ft) * inner_r, np.sin(ft) * outer_r],
+                    color='#e0e0e0', linewidth=0.8, zorder=1)
+
+        # Target number label outside
+        lr = outer_r + 0.1
+        ax.text(np.cos(angles[ti]) * lr, np.sin(angles[ti]) * lr,
+                str(ti + 1), ha='center', va='center',
+                fontsize=9, fontweight='bold', zorder=4)
+
+    del_count = sum(v for (_, _, t), v in cross_counts.items() if t == "deletion")
+    ins_count = sum(v for (_, _, t), v in cross_counts.items() if t == "insertion")
+
+    if cross_counts:
+        max_count = max(cross_counts.values())
+        min_width = 0.01
+        max_width = 0.06
+
+        merged = {}
+        for (t1, t2, etype), count in cross_counts.items():
+            key = (t1, t2)
+            if key not in merged:
+                merged[key] = {"deletion": 0, "insertion": 0}
+            if etype == "indel":
+                merged[key]["deletion"] += count
+                merged[key]["insertion"] += count
+            else:
+                merged[key][etype] += count
+
+        for (t1, t2), vals in merged.items():
+            a1, a2 = angles[t1], angles[t2]
+            # Skip adjacent targets
+            if abs(t1 - t2) == 1 or (t1 == 0 and t2 == n_targets - 1):
+                continue
+
+            # Draw chord as bezier curves
+            ctrl_factor = 0.3
+            for etype, count in [("deletion", vals["deletion"]), ("insertion", vals["insertion"])]:
+                if count == 0:
+                    continue
+                width = min_width + (max_width - min_width) * (count / max_count)
+                color = '#ff6b6b' if etype == 'deletion' else '#4a6cf7'
+                alpha = min(0.7, 0.15 + 0.55 * (count / max_count))
+
+                # Two ends of the chord: at the inner edge of each sector
+                r_start = inner_r
+                r_end = inner_r
+
+                p1 = np.array([np.cos(a1) * r_start, np.sin(a1) * r_start])
+                p2 = np.array([np.cos(a2) * r_end, np.sin(a2) * r_end])
+
+                # Control points: pull toward center then outward
+                mid = (p1 + p2) / 2
+                center_dist = np.linalg.norm(mid)
+                if center_dist > 0:
+                    inward = -mid / center_dist * 0.15
+                else:
+                    inward = np.array([0, 0])
+                cp1 = p1 * ctrl_factor + mid * (1 - ctrl_factor) + inward
+                cp2 = p2 * ctrl_factor + mid * (1 - ctrl_factor) + inward
+
+                # For a ribbon, offset perpendicular to chord direction
+                chord_dir = p2 - p1
+                perp = np.array([-chord_dir[1], chord_dir[0]])
+                perp_norm = np.linalg.norm(perp)
+                if perp_norm > 0:
+                    perp /= perp_norm
+
+                offset = perp * width / 2
+
+                # Ribbon vertices: outer curve and inner curve
+                verts = [
+                    p1 + offset, cp1 + offset, cp2 + offset, p2 + offset,
+                    p2 - offset, cp2 - offset, cp1 - offset, p1 - offset,
+                ]
+                codes = [
+                    Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4,
+                    Path.LINETO, Path.CURVE4, Path.CURVE4, Path.CURVE4,
+                ]
+                path = Path(verts, codes)
+                patch = mpatches.PathPatch(path, facecolor=color, alpha=alpha,
+                                           edgecolor='none', zorder=2)
+                ax.add_patch(patch)
+
+    # Legend
+    legend_elements = [
+        mpatches.Patch(facecolor='#ff6b6b', alpha=0.6, label=f'Deletion (n={del_count})'),
+        mpatches.Patch(facecolor='#4a6cf7', alpha=0.6, label=f'Insertion (n={ins_count})'),
+    ]
+    ax.legend(handles=legend_elements, loc='lower left', framealpha=0.8, fontsize=9)
+
+    ax.set_title('Cross-Target Deletion/Insertion Chord Diagram\n'
+                 f'Deletions: {del_count}, Insertions: {ins_count}',
+                 fontsize=11, pad=15)
+
     fig.tight_layout()
     return _img_to_b64(fig)
 
@@ -578,7 +1058,7 @@ def generate_charts(results: List[Dict], report_data: dict = None,
     if not _ensure_mpl():
         return charts
     try:
-        charts['reads_dist'] = _gen_reads_distribution(results)
+        charts['reads_length_dist'] = _gen_length_distribution(results, ref_length, weight_by_reads=True)
         charts['align_rate'] = _gen_alignment_rate(results)
         charts['length_dist'] = _gen_length_distribution(results, ref_length)
         if report_data:

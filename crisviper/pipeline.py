@@ -4,10 +4,9 @@
   1. 数据转换（DataLoader）
   2. 序列比对（Aligner）
   3. 突变识别（MutationDetector）
-  4. 序列矫正（CorrectionPipeline）
-  5. Allele过滤（AlleleFilter）
-  6. 数据统计（StatsCollector）
-  7. 输出结果（ResultSaver）
+  4. Allele过滤（AlleleFilter）
+  5. 数据统计（StatsCollector）
+  6. 输出结果（ResultSaver）
 
 每个步骤可独立测试、替换、跳过。
 """
@@ -33,13 +32,6 @@ from crisviper.models import (
 )
 from crisviper.config import CutsiteRegion, AmpliconConfig
 from crisviper.mutation import extract_mutations, build_mutation_summary, annotate_mutations, _build_ref_pos_map_full
-from crisviper.corrections import (
-    convert_dense_mismatch_to_indel,
-    filter_point_mutations,
-    correct_repetitive_misalignment,
-    correct_target_misalignments,
-    remove_isolated_matches,
-)
 from crisviper.alignment import (
     affine_gap_alignment,
     affine_gap_alignment_position_aware,
@@ -47,7 +39,8 @@ from crisviper.alignment import (
 )
 from crisviper.lineage import (
     lineage_tracer_align,
-    build_gap_penalty_profile,
+    build_gradient_profiles,
+    build_homology_penalty_profile,
     get_amplicon_structure,
 )
 from crisviper.denoiser import directional_adjacency_top_down_denoiser
@@ -160,63 +153,6 @@ def _extract_internal_region(
     return ar_int, aq_int, int_r
 
 
-def apply_corrections_pipeline(
-    aligned_ref: str,
-    aligned_query: str,
-    ref_seq: str,
-    query_seq: str,
-    correction_list: List[str],
-    cutsites: Optional[List[CutsiteRegion]] = None,
-    mismatch_density_threshold: float = 0.34,
-    mutation_window: int = 3,
-    config: Optional[AmpliconConfig] = None,
-    repeat_correction_mode: str = "auto",
-) -> Tuple[str, str]:
-    """应用矫正函数管线
-
-    correction_list 中的函数名按顺序执行。
-    每个函数对齐后的输出作为下一个的输入。
-
-    参数:
-        config: 可选的 AmpliconConfig。提供时启用动态坐标检测。
-
-    返回: (矫正后的 aligned_ref, aligned_query)
-    """
-    ar, aq = aligned_ref, aligned_query
-
-    for fn_name in correction_list:
-        try:
-            if fn_name == "convert_dense_mismatch_to_indel":
-                ar, aq, _ = convert_dense_mismatch_to_indel(
-                    ar, aq,
-                    threshold=mismatch_density_threshold,
-                )
-            elif fn_name == "correct_repetitive_misalignment":
-                # "hardcoded" mode: don't pass ref_seq → uses _HARDCODED_REPEATS_CONFIG
-                rep_ref = ref_seq if repeat_correction_mode == "auto" else None
-                ar, aq, _ = correct_repetitive_misalignment(ar, aq, rep_ref)
-            elif fn_name == "correct_target_misalignments":
-                if config is not None:
-                    cs_start = len(config.prefix) + 1 * config.period + config.cutsite_offset - 1
-                    cs_end = len(config.prefix) + (config.n_targets - 1) * config.period + config.cutsite_offset - 1
-                else:
-                    cs_start = cs_end = None
-                ar, aq, _ = correct_target_misalignments(ar, aq, ref_seq, cs_start, cs_end)
-            elif fn_name == "remove_isolated_matches":
-                ar, aq, _ = remove_isolated_matches(ar, aq)
-            elif fn_name == "filter_point_mutations":
-                if cutsites:
-                    ar, aq, _ = filter_point_mutations(
-                        ar, aq, cutsites, window=mutation_window,
-                    )
-            else:
-                log.warning("未知的矫正函数: %s，跳过", fn_name)
-        except Exception as e:
-            log.warning("矫正函数 %s 执行失败: %s，继续尝试后续矫正", fn_name, e)
-
-    return ar, aq
-
-
 # ═══════════════════════════════════════════════════════════════
 # 步骤2: Allele置信度过滤
 # ═══════════════════════════════════════════════════════════════
@@ -224,62 +160,140 @@ def apply_corrections_pipeline(
 def check_allele_confidence(
     stats: AlignmentStats,
     read_count: int,
-    min_reads_snv: int = 10,
-    min_reads_indel: int = 3,
+    min_reads_sub: int = 5,
+    min_reads_indel: int = 0,
 ) -> Tuple[bool, str]:
     """检查Allele置信度
 
     规则:
-      - 仅点突变（无indel）需 readCount >= min_reads_snv
-      - 有indel的需 readCount >= min_reads_indel
+      - 仅点突变（无indel）需 readCount > min_reads_sub
+      - 有indel的需 readCount > min_reads_indel
       - 无突变的野生型直接通过
 
     返回: (通过与否, 原因)
     """
     if not stats.has_indel and stats.mismatches > 0:
         # 仅点突变
-        if read_count < min_reads_snv:
-            return False, f"假阳性: 仅点突变但readCount不足({read_count}<{min_reads_snv})"
+        if read_count <= min_reads_sub:
+            return False, f"假阳性: 仅点突变但readCount不足({read_count}<={min_reads_sub})"
     elif stats.has_indel:
         # 有indel
-        if read_count < min_reads_indel:
-            return False, f"假阳性: 有indel但readCount不足({read_count}<{min_reads_indel})"
+        if read_count <= min_reads_indel:
+            return False, f"假阳性: 有indel但readCount不足({read_count}<={min_reads_indel})"
     return True, ""
 
 
 # ═══════════════════════════════════════════════════════════════
-# 步骤3: 单序列比对（完整的 align_single 逻辑）
+# 步骤3: 背景点突变矫正
 # ═══════════════════════════════════════════════════════════════
 
-def _build_correction_list(config: PipelineConfig, lineage_mode: bool = False) -> List[str]:
-    """根据配置动态构建矫正函数列表"""
-    # 从 toggle 标记决定哪些矫正启用
-    enabled = {}
-    # 密集错配矫正
-    enabled["convert_dense_mismatch_to_indel"] = config.enable_dense_mismatch_correction
-    # 重复序列矫正
-    if config.repeat_correction_mode == "off":
-        enabled["correct_repetitive_misalignment"] = False
-    else:
-        enabled["correct_repetitive_misalignment"] = True
-    # 小片段跨靶点矫正
-    enabled["correct_target_misalignments"] = config.enable_target_misalignment_correction
-    # 孤立匹配清除
-    enabled["remove_isolated_matches"] = config.enable_isolated_match_removal
-    # 点突变过滤
-    enabled["filter_point_mutations"] = config.enable_point_mutation_filtering
+def correct_background_substitutions(
+    ar_int: str,
+    aq_int: str,
+    cutsites: Optional[List[CutsiteRegion]],
+    sub_window: int = 3,
+    keep_sub_indel_window: int = 3,
+    lineage_mode: bool = True,
+) -> str:
+    """校正背景点突变：将cutsite窗口和indel邻近区外的substitution改回reference
 
-    result = []
-    for fn_name in config.corrections:
-        if enabled.get(fn_name, True):
-            result.append(fn_name)
+    在合并allele之前调用，消除测序背景点突变导致的等位基因碎片化。
 
-    # 谱系模式：跳过 end-to-end 密集错配矫正和点突变过滤
-    # （这些在 lineage_tracer_align 内部已处理）
-    if lineage_mode:
-        result = [c for c in result
-                  if c not in ("convert_dense_mismatch_to_indel", "filter_point_mutations")]
-    return result
+    保留规则（满足任一即保留）：
+      1. 谱系模式：cutsite ± sub_window 内的 substitution
+      2. 标准模式：cutsite 自身范围内的 substitution
+      3. 任意模式：indel 任一端点 ± keep_sub_indel_window 内的 substitution
+
+    Args:
+        ar_int: 内部区域比对的参考序列（含gap）
+        aq_int: 内部区域比对的查询序列（含gap）
+        cutsites: cutsite区域列表（已转换到内部区域坐标）
+        sub_window: cutsite邻近保留窗口(bp)
+        keep_sub_indel_window: indel邻近保留窗口(bp)
+        lineage_mode: 是否谱系示踪模式
+
+    Returns:
+        矫正后的 aq_int
+    """
+    if cutsites is None or not ar_int or len(ar_int) != len(aq_int):
+        return aq_int
+
+    pos_map, total = _build_ref_pos_map_full(ar_int)
+
+    # Step 1: 收集 indel 涉及的 ref 坐标区间（扩展 flank）
+    indel_keep_regions = []
+    i = 0
+    alen = len(ar_int)
+    while i < alen:
+        # Deletion: ref has base, query is gap
+        if ar_int[i] != '-' and aq_int[i] == '-':
+            start = pos_map[i]
+            while i < alen and ar_int[i] != '-' and aq_int[i] == '-':
+                i += 1
+            end = pos_map[i - 1]
+            rs = max(0, start - keep_sub_indel_window)
+            re = min(total - 1, end + keep_sub_indel_window)
+            indel_keep_regions.append((rs, re))
+        # Insertion: ref is gap, query has base
+        elif ar_int[i] == '-' and aq_int[i] != '-':
+            left_pos = pos_map[i - 1] if i > 0 and pos_map[i - 1] >= 0 else 0
+            while i < alen and ar_int[i] == '-' and aq_int[i] != '-':
+                i += 1
+            rs = max(0, left_pos - keep_sub_indel_window)
+            re = min(total - 1, left_pos + keep_sub_indel_window)
+            indel_keep_regions.append((rs, re))
+        else:
+            i += 1
+
+    # Step 2: 构建保留区域集合（区间合并）
+    keep_intervals = []  # (start, end) inclusive
+
+    # 2a: cutsite 区域
+    for cs in cutsites:
+        if lineage_mode:
+            ks = max(0, cs.start - sub_window)
+            ke = min(total - 1, cs.end + sub_window)
+        else:
+            ks = max(0, cs.start)
+            ke = min(total - 1, cs.end)
+        keep_intervals.append((ks, ke))
+
+    # 2b: indel flanking
+    keep_intervals.extend(indel_keep_regions)
+
+    if not keep_intervals:
+        return aq_int
+
+    # 合并重叠区间
+    keep_intervals.sort()
+    merged = [keep_intervals[0]]
+    for s, e in keep_intervals[1:]:
+        if s <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+
+    # Step 3: 遍历 substitution 列，判断是否保留
+    aq_list = list(aq_int)
+    for i in range(alen):
+        if ar_int[i] != '-' and aq_int[i] != '-' and ar_int[i] != aq_int[i]:
+            ref_pos = pos_map[i]
+            if ref_pos < 0:
+                continue
+            in_keep = False
+            for ks, ke in merged:
+                if ks <= ref_pos <= ke:
+                    in_keep = True
+                    break
+            if not in_keep:
+                aq_list[i] = ar_int[i]
+
+    return ''.join(aq_list)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 步骤4: 单序列比对（完整的 align_single 逻辑）
+# ═══════════════════════════════════════════════════════════════
 
 
 def align_single(
@@ -294,7 +308,7 @@ def align_single(
       1. 全长全局比对（ref 332bp vs query）
       2. 引物区比对质量检查（取代双端锚定先验检查）
       3. 内部区域提取（trim 掉引物列）
-      4. 矫正管线
+      4. 背景点突变矫正（合并allele前，消除测序背景）
       5. 使用 WT 引物组装全长输出
       6. 内部区域重计分
       7. 突变识别
@@ -313,7 +327,7 @@ def align_single(
         )
     else:
         score, ar, aq, raw_stats = _align_full_standard(
-            r_seq, q_seq, config,
+            r_seq, q_seq, config, cutsites=cutsites,
         )
 
     if not ar:
@@ -338,18 +352,17 @@ def align_single(
     if ar_int is None:
         return AlignmentResult.error_result(query, "无法从全长比对中提取内部区域")
 
-    # ── 步骤4: 矫正管线 ──
-    corrections_to_apply = _build_correction_list(config, lineage_mode=(config.lineage_mode and cutsites is not None))
-    ar_int_corrected, aq_int_corrected = apply_corrections_pipeline(
-        ar_int, aq_int, int_r, int_r,
-        correction_list=corrections_to_apply,
-        cutsites=cutsites,
-        mismatch_density_threshold=config.mismatch_density_threshold,
-        mutation_window=config.mutation_window,
-        repeat_correction_mode=config.repeat_correction_mode,
-    )
-    if ar_int_corrected != ar_int or aq_int_corrected != aq_int:
-        ar_int, aq_int = ar_int_corrected, aq_int_corrected
+    # ── 步骤4: 背景点突变矫正（合并allele前） ──
+    if config.correct_bg_sub and cutsites is not None:
+        int_r_len = len(r_seq) - p5 - p3
+        internal_cutsites = _adjust_cutsites_to_internal(cutsites, p5, int_r_len)
+        aq_int = correct_background_substitutions(
+            ar_int, aq_int,
+            cutsites=internal_cutsites,
+            sub_window=config.sub_window,
+            keep_sub_indel_window=config.keep_sub_indel_window,
+            lineage_mode=config.lineage_mode,
+        )
 
     # ── 步骤5: WT 引物组装 ──
     aligned_ref, aligned_query = _assemble_full_length(
@@ -374,8 +387,21 @@ def align_single(
     mutations = extract_mutations(
         ar_int, aq_int,
         cutsites=internal_cutsites,
-        mutation_window=config.mutation_window,
+        sub_window=config.sub_window,
     )
+
+    # 转换 ref_pos 从内部坐标 → 全长参考坐标
+    for m in mutations:
+        m.ref_pos += config.primer5_len
+
+    # ── 步骤8: Allele置信度过滤 ──
+    passed, reason = check_allele_confidence(
+        stats, query.readCount,
+        min_reads_sub=config.min_reads_sub,
+        min_reads_indel=config.min_reads_indel,
+    )
+    if not passed:
+        return AlignmentResult.error_result(query, reason)
 
     return AlignmentResult(
         query=query,
@@ -416,13 +442,14 @@ def _align_full_lineage(
         mismatch_penalty=config.mismatch_penalty,
         base_gap_open=config.gap_open,
         base_gap_extend=config.gap_extend,
-        cutsite_gap_scale=config.cutsite_gap_scale,
-        flank_gap_scale=config.flank_gap_scale,
-        far_gap_scale=config.far_gap_scale,
-        flank_width=config.flank_width,
+        min_scale=config.min_scale,
+        max_scale=config.max_scale,
+        cutsite_edge_scale=config.cutsite_edge_scale,
+        gradient_radius=config.gradient_radius,
         mismatch_density_threshold=config.mismatch_density_threshold,
-        mutation_window=config.mutation_window,
-        gap_exit_bonus=config.gap_exit_bonus,
+        sub_window=config.sub_window,
+        gap_exit_bonus=0.0,
+        base_gap_exit=config.gap_exit_strength,
         short_match_window=config.short_match_window,
         short_match_discount=config.short_match_discount,
         dense_mismatch_window=config.dense_mismatch_window,
@@ -442,146 +469,58 @@ def _align_full_standard(
     r_seq: str,
     q_seq: str,
     config: PipelineConfig,
+    cutsites: Optional[List[CutsiteRegion]] = None,
 ) -> Tuple[float, str, str, Dict]:
-    """全长标准 Gotoh 比对 ref vs query"""
+    """全长标准 Gotoh 比对 ref vs query
+
+    当 cutsites 可用且 config.gradient_mode 启用时，使用平滑梯度
+    位置感知的 gap/mismatch 惩罚；否则使用全局固定惩罚。
+    """
     if not q_seq:
         return 0.0, "", "", {"matches": 0, "mismatches": 0, "gaps_in_ref": 0,
                              "gaps_in_query": 0, "gap_blocks_ref": [],
                              "gap_blocks_query": [], "alignment_length": 0,
                              "similarity": 0.0, "identity": 0.0, "score": 0.0}
 
-    score, ar, aq, raw_stats = affine_gap_alignment(
-        r_seq, q_seq,
-        match_score=config.match_score,
-        mismatch_penalty=config.mismatch_penalty,
-        gap_open=config.gap_open,
-        gap_extend=config.gap_extend,
-        gap_exit_bonus=config.gap_exit_bonus,
-        short_match_window=config.short_match_window,
-        short_match_discount=config.short_match_discount,
-    )
+    if cutsites and config.gradient_mode:
+        gap_open_p, gap_extend_p, mismatch_p, _ = build_gradient_profiles(
+            ref_length=len(r_seq), cutsites=cutsites,
+            base_gap_open=config.gap_open, base_gap_extend=config.gap_extend,
+            mismatch_penalty=config.mismatch_penalty,
+            min_scale=config.min_scale, max_scale=config.max_scale,
+            cutsite_edge_scale=config.cutsite_edge_scale,
+            gradient_radius=config.gradient_radius,
+        )
+        homology_p = build_homology_penalty_profile(
+            r_seq, homology_window=config.homology_window,
+            homology_penalty=config.homology_penalty,
+        )
+        score, ar, aq, raw_stats = affine_gap_alignment_position_aware(
+            r_seq, q_seq, gap_open_p, gap_extend_p,
+            match_score=config.match_score,
+            mismatch_penalty=config.mismatch_penalty,
+            mismatch_penalty_profile=mismatch_p,
+            gap_exit_bonus=config.gap_exit_strength,
+            short_match_window=config.short_match_window,
+            short_match_discount=config.short_match_discount,
+            dense_mismatch_window=config.dense_mismatch_window,
+            dense_mismatch_threshold=config.mismatch_density_threshold,
+            dense_mismatch_penalty=config.dense_mismatch_penalty,
+            homology_profile=homology_p,
+            isolated_base_penalty=config.isolated_base_penalty,
+        )
+    else:
+        score, ar, aq, raw_stats = affine_gap_alignment(
+            r_seq, q_seq,
+            match_score=config.match_score,
+            mismatch_penalty=config.mismatch_penalty,
+            gap_open=config.gap_open,
+            gap_extend=config.gap_extend,
+            gap_exit_bonus=config.gap_exit_strength,
+            short_match_window=config.short_match_window,
+            short_match_discount=config.short_match_discount,
+        )
     return score, ar, aq, raw_stats
-
-
-# ═══════════════════════════════════════════════════════════════
-# 片段化比对修复
-# ═══════════════════════════════════════════════════════════════
-
-def _fix_fragmented_alignment(
-    ar_int: str,
-    aq_int: str,
-    int_r: str,
-    int_q: str,
-    config: PipelineConfig,
-) -> Tuple[str, str, float]:
-    """修复因重复元件导致的片段化或位置偏移比对"""
-    # ── 从 aq_int 中提取所有非 gap 片段 ──
-    blocks = []
-    in_block = False
-    for i, c in enumerate(aq_int):
-        if c != '-':
-            if not in_block:
-                block_start = i
-                in_block = True
-        else:
-            if in_block:
-                blocks.append((block_start, i, aq_int[block_start:i]))
-                in_block = False
-    if in_block:
-        blocks.append((block_start, len(aq_int), aq_int[block_start:]))
-
-    if not blocks:
-        return ar_int, aq_int, 0.0
-
-    # ── 判断是否需要矫正 ──
-    first_nongap = blocks[0][0]
-    last_block_end = blocks[-1][1]
-
-    shifted = first_nongap > 20
-    scattered = len(blocks) >= 2 and last_block_end < len(int_r) - 5
-    needs_anchoring = shifted or scattered or len(blocks) > 2
-
-    if not (needs_anchoring and len(int_q) <= len(int_r) - 10):
-        if len(blocks) > 2:
-            # 轻度片段化：基于参考位置重新放置每个片段
-            return _place_blocks_at_ref_positions(ar_int, blocks)
-        return ar_int, aq_int, 0.0
-
-    # ── 计算每个片段在 int_r 上的起止坐标（strip gap） ──
-    block_ref_positions = []
-    for start, end, seq in blocks:
-        r_start = sum(1 for c in ar_int[:start] if c != '-')
-        r_end = sum(1 for c in ar_int[:end] if c != '-')
-        block_ref_positions.append((r_start, r_end, start, seq))
-
-    # ── 安全守卫：检测片段间是否存在真实缺失 ──
-    #   间距 > 3 且间隔区域非简单重复 → 视为真实 indel，跳过修复
-    has_real_indel = False
-    for i in range(len(block_ref_positions) - 1):
-        _, cur_end, _, _ = block_ref_positions[i]
-        next_start, _, _, _ = block_ref_positions[i + 1]
-        gap = next_start - cur_end
-        if gap > 3:
-            gap_seq = int_r[cur_end:next_start]
-            if len(gap_seq) > 3 and len(set(gap_seq)) > 2:
-                has_real_indel = True
-                break
-
-    if has_real_indel:
-        return ar_int, aq_int, 0.0
-
-    # ── 基于参考位置构建新的 aq_int ──
-    #   每个片段放在 ar_int 中对应参考位置处，而非暴力拼接
-    new_aq = ['-'] * len(ar_int)
-    for r_start, _r_end, _orig_start, seq in block_ref_positions:
-        insert_pos = 0
-        non_gap_cnt = 0
-        while insert_pos < len(ar_int) and non_gap_cnt < r_start:
-            if ar_int[insert_pos] != '-':
-                non_gap_cnt += 1
-            insert_pos += 1
-        if non_gap_cnt == r_start:
-            limit = min(len(seq), len(new_aq) - insert_pos)
-            for i in range(limit):
-                new_aq[insert_pos + i] = seq[i]
-
-    new_aq_str = ''.join(new_aq)
-
-    # ── 基于真实比对位置计算分数 ──
-    matches = sum(1 for i in range(len(new_aq_str))
-                  if new_aq_str[i] != '-' and new_aq_str[i] == ar_int[i])
-    mismatches = sum(1 for i in range(len(new_aq_str))
-                     if new_aq_str[i] != '-' and new_aq_str[i] != ar_int[i])
-    score = (matches * config.match_score +
-             mismatches * config.mismatch_penalty)
-    return ar_int, new_aq_str, score
-
-
-def _place_blocks_at_ref_positions(
-    ar_int: str,
-    blocks: list,
-) -> Tuple[str, str, float]:
-    """将 aq_int 的各个非 gap 片段按其参考坐标重新放置。
-
-    每个片段原本在 ar_int 中有对应的参考区域，此函数保持每个片段
-    与其参考区域的对应关系，而非简单拼接。
-    """
-    new_aq = ['-'] * len(ar_int)
-    for start, end, seq in blocks:
-        # 计算此片段覆盖的参考区域起止（去除 ar_int 中的 gap）
-        r_start = sum(1 for c in ar_int[:start] if c != '-')
-        # 找到 ar_int 中第 r_start 个非 gap 字符的起始位置
-        insert_pos = 0
-        cnt = 0
-        while insert_pos < len(ar_int) and cnt < r_start:
-            if ar_int[insert_pos] != '-':
-                cnt += 1
-            insert_pos += 1
-        if cnt == r_start:
-            limit = min(len(seq), len(new_aq) - insert_pos)
-            for i in range(limit):
-                new_aq[insert_pos + i] = seq[i]
-    return ar_int, ''.join(new_aq), 0.0
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -658,7 +597,7 @@ class Pipeline:
       1. 全长全局比对         (affine_gap_alignment / lineage_tracer_align)
       2. 引物区比对质量检查     (_check_primer_quality)
       3. 内部区域提取          (_extract_internal_region)
-      4. 序列矫正             (apply_corrections_pipeline)
+
       5. WT 引物组装          (_assemble_full_length)
       6. 内部区域重计分         (calculate_alignment_stats)
       7. 突变识别             (extract_mutations)
