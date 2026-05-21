@@ -155,6 +155,8 @@ def main():
 
     # 并行参数
     align_parser.add_argument("--threads", "-t", type=int, default=1)
+    align_parser.add_argument("--chunk-size", type=int, default=None,
+                              help="每批次序列数（默认：自动计算，约 total/(threads×3)）")
 
     # 引物参数
     align_parser.add_argument("--primer5-len", type=int, default=23)
@@ -260,6 +262,16 @@ def main():
             log.info("Allele过滤 (min_reads>=%d): %d → %d",
                      args.min_reads, before, len(query_records))
 
+        # ── 计算批次大小 ──
+        total_queries = len(query_records)
+        if args.chunk_size is not None:
+            chunk_size = args.chunk_size
+        else:
+            target_chunks = max(args.threads * 3, 12)
+            chunk_size = max(100, total_queries // target_chunks)
+        log.info("  批次大小: %d 条/批（共 %d 批）", chunk_size,
+                 (total_queries + chunk_size - 1) // chunk_size)
+
         # ── 构建 PipelineConfig ──
         config = PipelineConfig(
             match_score=args.match_score,
@@ -288,6 +300,7 @@ def main():
             min_reads_sub=args.min_reads_sub,
             min_reads_indel=args.min_reads_indel,
             threads=args.threads,
+            chunk_size=chunk_size,
             cutsites_path=args.cutsites,
             report_format=args.report,
             allele_top_n=args.allele_top_n,
