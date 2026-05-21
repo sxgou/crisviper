@@ -2,8 +2,7 @@
 
 import io
 import base64
-from typing import List, Dict, Optional
-import numpy as np
+from typing import List, Dict
 from crisviper.logging_config import get_logger
 from crisviper.mutation import _build_ref_pos_map_full
 
