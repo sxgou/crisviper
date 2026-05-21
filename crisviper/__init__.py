@@ -31,11 +31,11 @@ from crisviper.lineage import (
 )
 from crisviper.mutation import (
     extract_mutations, classify_mutation_type,
-    build_mutation_summary, format_mutations_for_display,
+    build_mutation_summary,
     annotate_mutation, annotate_mutations,
     classify_bp_event,
 )
-from crisviper.pipeline import Pipeline, align_single, check_primer_anchoring
+from crisviper.pipeline import Pipeline, align_single
 from crisviper.io import (
     fastq_to_dataframe, fastq_to_fasta, fastq_to_fasta_from_rows,
     merge_paired_end, save_tsv,

@@ -4,7 +4,7 @@ Port of MATLAB's CallableCollection.call_alleles_coarse_grain and
 call_alleles_exact.
 """
 
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 from dataclasses import dataclass, field
 from crisviper.models import AlignmentResult, MutationEvent, MutationType
 

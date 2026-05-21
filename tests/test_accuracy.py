@@ -22,7 +22,6 @@ from crisviper import (
     lineage_tracer_align,
     extract_mutations,
     MutationEvent, MutationType,
-    AlignmentStats,
 )
 
 # ═══════════════════════════════════════════════════════════════

@@ -21,17 +21,16 @@ os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['MKL_NUM_THREADS'] = '1'
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
 
-import multiprocessing as mp
 from typing import List, Dict
 
 from crisviper import (
-    PipelineConfig, PipelineResult, AlignmentResult, QueryRecord,
+    PipelineConfig, QueryRecord,
     fastq_to_dataframe, fastq_to_fasta, fastq_to_fasta_from_rows,
     merge_paired_end, save_tsv,
     read_reference_fasta, read_queries_tsv, read_queries_fasta,
     Pipeline,
     save_alignment_results, save_summary_tables, generate_report,
-    get_amplicon_structure, CutsiteRegion,
+    get_amplicon_structure,
     get_logger, setup_logging,
 )
 

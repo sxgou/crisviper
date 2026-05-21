@@ -18,11 +18,10 @@ os.environ.setdefault('MKL_NUM_THREADS', '1')
 os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
 
 import sys
-import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 from functools import partial
-from typing import List, Dict, Optional, Tuple, Callable
+from typing import List, Dict, Optional, Tuple
 
 from crisviper.logging_config import get_logger
 from crisviper.models import (
@@ -49,47 +48,9 @@ from crisviper.caller import call_alleles_coarse_grain, call_alleles_exact, Call
 log = get_logger(__name__)
 
 
-def _find_anchor_start(ar_bases: str, int_r: str, n_anchor: int = 20) -> int:
-    """在 ref 中查找比对 ref 碱基的最佳起始位置"""
-    if not ar_bases:
-        return 0
-    n_anchor = min(n_anchor, len(ar_bases))
-    anchor = ar_bases[:n_anchor]
-    best_pos, best_cnt = 0, -1
-    for i in range(len(int_r) - n_anchor + 1):
-        cnt = sum(1 for k in range(n_anchor) if int_r[i + k] == anchor[k])
-        if cnt > best_cnt:
-            best_cnt = cnt
-            best_pos = i
-    return best_pos
-
-
 # ═══════════════════════════════════════════════════════════════
 # 步骤1: 双端锚定（Primer检测）
 # ═══════════════════════════════════════════════════════════════
-
-def check_primer_anchoring(
-    query_seq: str,
-    ref_seq: str,
-    primer5_len: int = 23,
-    primer3_len: int = 33,
-    primer5_threshold: int = 19,
-    primer3_threshold: int = 29,
-) -> Tuple[bool, int, int]:
-    """检查 query 是否能双端锚定到 ref (deprecated — 推荐使用 _check_primer_quality)
-
-    返回: (通过与否, p5匹配数, p3匹配数)
-    """
-    if len(query_seq) < primer5_len + primer3_len:
-        return False, 0, 0
-
-    p5_matches = sum(1 for a, b in zip(query_seq[:primer5_len], ref_seq[:primer5_len]) if a == b)
-    q3_check = query_seq[-primer3_len:] if len(query_seq) >= primer3_len else ""
-    p3_matches = sum(1 for a, b in zip(q3_check, ref_seq[-primer3_len:]) if a == b)
-
-    return (p5_matches >= primer5_threshold and p3_matches >= primer3_threshold,
-            p5_matches, p3_matches)
-
 
 def _check_primer_quality(
     ar: str,

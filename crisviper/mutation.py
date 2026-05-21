@@ -432,28 +432,3 @@ def build_mutation_summary(
     }
 
 
-def format_mutations_for_display(
-    mutations: List[MutationEvent],
-    max_events: int = 20,
-) -> str:
-    """将突变事件列表格式化为可读字符串（用于调试/日志）"""
-    if not mutations:
-        return "未检测到突变"
-
-    lines = []
-    for i, m in enumerate(mutations[:max_events]):
-        pos_info = f"@pos{m.ref_pos}" if m.ref_pos >= 0 else ""
-        cut_info = " [窗口内]" if m.in_cutsite_window else " [窗口外]"
-        if m.type == MutationType.SUBSTITUTION:
-            lines.append(f"  {i+1}. 替换 {pos_info}: {m.ref_base}→{m.query_base}{cut_info}")
-        elif m.type == MutationType.DELETION:
-            lines.append(f"  {i+1}. 删除 {pos_info}: -{m.length}bp ({m.ref_base}){cut_info}")
-        elif m.type == MutationType.INSERTION:
-            lines.append(f"  {i+1}. 插入 {pos_info}: +{m.length}bp ({m.query_base}){cut_info}")
-        elif m.type == MutationType.INDEL:
-            lines.append(f"  {i+1}. 复合 {pos_info}: {m.length}bp{cut_info}")
-
-    if len(mutations) > max_events:
-        lines.append(f"  ... 还有 {len(mutations) - max_events} 个事件未显示")
-
-    return "\n".join(lines)

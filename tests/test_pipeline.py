@@ -20,11 +20,11 @@ import pytest
 
 from crisviper import (
     Pipeline, PipelineConfig, QueryRecord,
-    align_single, check_primer_anchoring,
-    read_reference_fasta, read_queries_tsv,
-    save_alignment_results, generate_report,
-    get_amplicon_structure, CutsiteRegion,
-    extract_mutations, MutationType,
+    align_single,
+    generate_report,
+    get_amplicon_structure,
+    read_queries_tsv,
+    MutationType,
 )
 
 
