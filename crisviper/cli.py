@@ -15,6 +15,7 @@
 import argparse
 import sys
 import os
+import time
 # 防止 fork + NumPy 线程冲突（在 import crisviper 之前设置）
 os.environ.setdefault('OMP_NUM_THREADS', '1')
 os.environ.setdefault('MKL_NUM_THREADS', '1')
@@ -42,6 +43,13 @@ __version__ = "1.0.0"
 def _queries_to_records(queries: List[Dict]) -> List[QueryRecord]:
     """将旧版 dict 格式转为 QueryRecord"""
     return [QueryRecord(**q) for q in queries]
+
+
+def _log_timing(logger, label: str, t_start: float) -> float:
+    """记录自 t_start 以来的耗时(s)，返回当前时间。"""
+    elapsed = time.perf_counter() - t_start
+    logger.info("  ⏱ %s: %.1fs", label, elapsed)
+    return time.perf_counter()
 
 
 def main():
@@ -223,10 +231,13 @@ def main():
                 sys.exit(1)
 
     elif args.command == "align":
+        t0 = time.perf_counter()
+
         # 读取reference
         log.info("读取reference序列: %s", args.reference)
         ref_seq = read_reference_fasta(args.reference)
         log.info("reference序列长度: %d bp", len(ref_seq))
+        t = _log_timing(log, "读取reference", t0)
 
         # 读取查询序列
         queries_path = args.queries
@@ -237,6 +248,7 @@ def main():
         else:
             log.error("不支持的查询文件格式: %s", queries_path)
             sys.exit(1)
+        t = _log_timing(log, "读取查询序列", t)
 
         # 转为类型安全的 QueryRecord
         query_records = _queries_to_records(queries)
@@ -298,17 +310,21 @@ def main():
         # ── 运行管道 ──
         pipeline = Pipeline(config=config, ref_seq=ref_seq)
         pipeline_result = pipeline.run(query_records)
+        t = _log_timing(log, "谱系示踪比对（并行）", t)
 
         # ── 转换为兼容的输出格式 ──
         output_results = [r.to_dict() for r in pipeline_result.results]
+        t = _log_timing(log, "结果转dict", t)
 
         # ── 保存结果 ──
         save_alignment_results(output_results, args.output, args.format)
+        t = _log_timing(log, "保存TSV结果", t)
 
         # ── 保存总结表格 ──
         output_dir = os.path.dirname(os.path.abspath(args.output))
         save_summary_tables(output_results, output_dir, ref_seq=ref_seq,
                             cutsites=_get_display_cutsites(ref_seq))
+        t = _log_timing(log, "保存总结表格", t)
 
         # ── 生成分析报告 ──
         if args.report:
@@ -322,6 +338,10 @@ def main():
                              allele_window_end=args.allele_window_end,
                              allele_top_n=args.allele_top_n,
                              version=__version__)
+            t = _log_timing(log, "生成HTML报告", t)
+
+        total = time.perf_counter() - t0
+        log.info("  ⏱ 总耗时: %.1fs (%.1f min)", total, total / 60)
 
     else:
         parser.print_help()
