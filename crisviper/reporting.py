@@ -420,10 +420,7 @@ def _save_report_html(report: dict, output_path: str, charts: dict = None,
 
     has_charts = bool(charts)
     chart_map = {k: _img_html(k) for k in [
-        'reads_length_dist', 'align_rate', 'length_dist',
-        'mutation_seq_pie', 'mutation_reads_pie',
-        'mutation_type', 'mutation_composition',
-        'indel_length', 'indel_position', 'allele_heatmap',
+        'indel_length', 'allele_heatmap',
     ]}
 
 
@@ -518,9 +515,6 @@ footer{{margin-top:30px;padding-top:10px;border-top:1px solid var(--bdr);
   <div class="card"><div class="lbl">Failed</div><div class="val">{s["failed_alignments"]}</div></div>
 </div>
 
-{has_charts and '<h2>Charts Overview</h2>' or ''}
-{has_charts and f'''<div class="chart-row"><div class="chart-box">{chart_map["reads_length_dist"]}</div><div class="chart-box">{chart_map["align_rate"]}</div></div>''' or ''}
-
 <h2 id="indel-length">Indel Length Distribution</h2>
 {has_charts and f'''<div class="chart-box">{chart_map["indel_length"]}</div>''' or ''}
 
@@ -529,9 +523,6 @@ footer{{margin-top:30px;padding-top:10px;border-top:1px solid var(--bdr);
 <tr><th>Mutation Type</th><th>Sequences</th><th>Seq %</th><th>Reads</th><th>Reads %</th></tr>
 {type_rows}
 </table>
-
-{has_charts and f'''<div class="chart-row"><div class="chart-box">{chart_map["mutation_seq_pie"]}</div><div class="chart-box">{chart_map["mutation_reads_pie"]}</div></div>''' or ''}
-{has_charts and f'''<div class="chart-row"><div class="chart-box">{chart_map["mutation_type"]}</div><div class="chart-box">{chart_map["mutation_composition"]}</div></div>''' or ''}
 
 <h2 id="stats">Mutation Statistics</h2>
 <div class="section"><div class="stat-grid">
@@ -554,8 +545,6 @@ footer{{margin-top:30px;padding-top:10px;border-top:1px solid var(--bdr);
     for csname, d in report.get("per_target", {}).items()
   ) or '<p style=color:#94a3b8;>No cutsite data available.</p>'}
 </div></div>
-
-{has_charts and f'''<div class="chart-box">{chart_map["indel_position"]}</div>''' or ''}
 
 {has_charts and f'''<h2 id="heatmap">Allele Heatmap</h2>
 <div class="chart-box">{chart_map["allele_heatmap"]}</div>''' or ''}

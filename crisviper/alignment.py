@@ -2,6 +2,7 @@
 
 import numpy as np
 from typing import Tuple, Dict, List, Optional
+from numba import jit
 
 
 def count_gap_blocks(seq: str) -> List[int]:
@@ -111,48 +112,106 @@ def _build_score_matrix(ref_seq: str, query_seq: str,
     return sub_score, run_len, density, is_match
 
 
-def _compute_run_len(is_match: np.ndarray, run_len: np.ndarray, m: int, n: int) -> None:
-    """Compute forward-looking match run length (O(m*n) Python loops, unavoidable)."""
+@jit(nopython=True, cache=True)
+def _compute_run_len_numba(is_match, run_len, m, n):
+    """Numba-JIT: forward-looking match run length."""
     for i in range(m - 1, -1, -1):
-        rmi = run_len[i]
-        rmi1 = run_len[i + 1]
-        imi = is_match[i]
         for j in range(n - 1, -1, -1):
-            if imi[j]:
-                rmi[j] = 1 + rmi1[j + 1]
+            if is_match[i, j]:
+                run_len[i, j] = 1 + run_len[i + 1, j + 1]
 
 
-def _compute_dense_mismatch_density(is_match: np.ndarray, m: int, n: int,
-                                    window: int) -> np.ndarray:
-    """Dense mismatch density via cumsum along diagonals — O(m*n) vectorized."""
+def _compute_run_len(is_match: np.ndarray, run_len: np.ndarray, m: int, n: int) -> None:
+    _compute_run_len_numba(is_match, run_len, m, n)
+
+
+@jit(nopython=True, cache=True)
+def _dense_mm_density_numba(is_match, m, n, window):
+    """Numba-JIT: dense mismatch density via sliding window on each diagonal."""
     half_w = window // 2
     density = np.zeros((m + 1, n + 1), dtype=np.float64)
-    mismatch = (~is_match).astype(np.int32)
 
-    # For each diagonal d (d = i - j), compute cumsum of mismatches
     for d in range(-(n - 1), m):
         if d >= 0:
-            i_start, j_start = d, 0
+            i0, j0 = d, 0
             length = min(m - d, n)
         else:
-            i_start, j_start = 0, -d
+            i0, j0 = 0, -d
             length = min(m, n + d)
         if length < 1:
             continue
 
-        diag_mm = mismatch[i_start:i_start + length, j_start:j_start + length].diagonal()
-        if len(diag_mm) == 0:
-            continue
+        # Initial window sum for k=0: positions [0, half_w] on diagonal
+        win_sum = 0
+        for t in range(min(half_w + 1, length)):
+            if is_match[i0 + t, j0 + t]:
+                win_sum += 0
+            else:
+                win_sum += 1
 
-        # Cumsum for sliding window
-        cs = np.zeros(len(diag_mm) + 2 * half_w + 1, dtype=np.int32)
-        cs[half_w + 1:half_w + 1 + len(diag_mm)] = np.cumsum(diag_mm)
-        for k in range(len(diag_mm)):
-            total_mm = cs[k + 2 * half_w + 1] - cs[k]
-            denom = min(k + half_w + 1, len(diag_mm) - k + half_w, window)
-            density[i_start + k, j_start + k] = total_mm / max(denom, 1)
+        for k in range(length):
+            denom = min(k + half_w + 1, length - k + half_w, window)
+            density[i0 + k, j0 + k] = win_sum / max(denom, 1)
+
+            # Slide window: remove k-half_w, add k+half_w+1
+            out_pos = k - half_w
+            if out_pos >= 0 and not is_match[i0 + out_pos, j0 + out_pos]:
+                win_sum -= 1
+            in_pos = k + half_w + 1
+            if in_pos < length and not is_match[i0 + in_pos, j0 + in_pos]:
+                win_sum += 1
 
     return density
+
+
+def _compute_dense_mismatch_density(is_match: np.ndarray, m: int, n: int,
+                                    window: int) -> np.ndarray:
+    return _dense_mm_density_numba(is_match, m, n, window)
+
+
+@jit(nopython=True, cache=True)
+def _dp_fill_numba(
+    M, Ix, Iy,
+    sub_score,
+    gap_open_profile,
+    gap_extend_profile,
+    geb_profile,
+    use_profile_geb,
+    geb_scalar,
+):
+    """Numba-JIT compiled DP fill for affine gap alignment (Gotoh algorithm).
+
+    Fills M, Ix, Iy matrices row by row. All arrays are modified in-place.
+    """
+    m = M.shape[0] - 1
+    n = M.shape[1] - 1
+    for i in range(1, m + 1):
+        go_i = gap_open_profile[i - 1]
+        ge_i = gap_extend_profile[i - 1]
+        go_ge_i = go_i + ge_i
+
+        # Gap exit bonus for this row
+        geb_i = geb_profile[i - 1] if use_profile_geb else geb_scalar
+
+        for j in range(1, n + 1):
+            # Iy[i, j] = max(M[i-1,j] + go+ge, Ix[i-1,j] + go+ge, Iy[i-1,j] + ge)
+            v1 = M[i - 1, j] + go_ge_i
+            v2 = Ix[i - 1, j] + go_ge_i
+            v3 = Iy[i - 1, j] + ge_i
+            Iy[i, j] = v1 if v1 >= v2 and v1 >= v3 else (v2 if v2 >= v3 else v3)
+
+            # M[i, j] = s(i-1,j-1) + max(M[i-1,j-1], Ix[i-1,j-1] + geb, Iy[i-1,j-1] + geb)
+            v1 = M[i - 1, j - 1]
+            v2 = Ix[i - 1, j - 1] + geb_i
+            v3 = Iy[i - 1, j - 1] + geb_i
+            best = v1 if v1 >= v2 and v1 >= v3 else (v2 if v2 >= v3 else v3)
+            M[i, j] = sub_score[i - 1, j - 1] + best
+
+            # Ix[i, j] = max(M[i,j-1] + go+ge, Ix[i,j-1] + ge, Iy[i,j-1] + go+ge)
+            v1 = M[i, j - 1] + go_ge_i
+            v2 = Ix[i, j - 1] + ge_i
+            v3 = Iy[i, j - 1] + go_ge_i
+            Ix[i, j] = v1 if v1 >= v2 and v1 >= v3 else (v2 if v2 >= v3 else v3)
 
 
 def affine_gap_alignment(ref_seq: str, query_seq: str,
@@ -334,62 +393,14 @@ def affine_gap_alignment_position_aware(
     for j in range(1, n + 1):
         Ix[0, j] = gap_open_profile[0] + gap_extend_profile[0] * (j - 1)
 
+    # ── DP fill via numba JIT ──
     gap_exit_active = (gap_exit_bonus != 0.0 or gap_exit_bonus_profile is not None)
-    # Prefer profile over scalar when both are provided
     use_profile_geb = gap_exit_bonus_profile is not None
-
-    for i in range(1, m + 1):
-        Mi_1 = M[i - 1]
-        Ixi_1 = Ix[i - 1]
-        Iyi_1 = Iy[i - 1]
-        Mi = M[i]
-        Ixi = Ix[i]
-        Iyi = Iy[i]
-
-        go_i = gap_open_profile[i - 1]
-        ge_i = gap_extend_profile[i - 1]
-        go_ge_i = go_i + ge_i
-
-        # ── Row i of substitution scores ──
-        s_row = sub_score[i - 1, :]  # shape (n,)
-
-        # ── Compute Iy[i, :] — vectorized (only depends on row i-1) ──
-        # Iy[i, j] = max(M[i-1, j] + go_i, Ix[i-1, j] + go_i, Iy[i-1, j] + ge_i)
-        _a = Mi_1[1:] + go_ge_i
-        _b = Ixi_1[1:] + go_ge_i
-        _c = Iyi_1[1:] + ge_i
-        # element-wise max of three arrays
-        Iyi[1:] = np.maximum(np.maximum(_a, _b), _c)
-
-        # ── Compute M[i, :] — first column from sub_score ──
-        # M[i, j] = s(i,j) + max(M[i-1,j-1], Ix[i-1,j-1], Iy[i-1,j-1])
-        prev_best = np.maximum(Mi_1[:n], np.maximum(Ixi_1[:n], Iyi_1[:n]))
-        Mi[1:] = s_row + prev_best[:n]
-
-        # ── Determine gap exit value for this row ──
-        if use_profile_geb:
-            geb_i = gap_exit_bonus_profile[i - 1]
-        else:
-            geb_i = gap_exit_bonus
-
-        # ── Compute Ix[i, :] — sequential within row ──
-        # Ix[i, j] = max(M[i,j-1] + go_ge_i, Ix[i,j-1] + ge_i, Iy[i,j-1] + go_ge_i)
-        if gap_exit_active:
-            for j in range(1, n + 1):
-                # For M, re-compute with gap_exit_bonus at this row position
-                m_best = max(Mi_1[j - 1], Ixi_1[j - 1] + geb_i, Iyi_1[j - 1] + geb_i)
-                Mi[j] = s_row[j - 1] + m_best
-                _a = Mi[j - 1] + go_ge_i
-                _b = Ixi[j - 1] + ge_i
-                _c = Iyi[j - 1] + go_ge_i
-                Ixi[j] = _a if _a >= _b and _a >= _c else (_b if _b >= _c else _c)
-        else:
-            # Standard Gotoh row scan for Ix
-            for j in range(1, n + 1):
-                _a = Mi[j - 1] + go_ge_i
-                _b = Ixi[j - 1] + ge_i
-                _c = Iyi[j - 1] + go_ge_i
-                Ixi[j] = _a if _a >= _b and _a >= _c else (_b if _b >= _c else _c)
+    geb_profile = gap_exit_bonus_profile if gap_exit_bonus_profile is not None else np.zeros(m, dtype=np.float64)
+    _dp_fill_numba(M, Ix, Iy, sub_score,
+                   gap_open_profile.astype(np.float64),
+                   gap_extend_profile.astype(np.float64),
+                   geb_profile, use_profile_geb, gap_exit_bonus)
 
     # ── Backtrace ──
     # Global alignment: only M[m, n] is valid at termination
