@@ -214,6 +214,53 @@ def _dp_fill_numba(
             Ix[i, j] = v1 if v1 >= v2 and v1 >= v3 else (v2 if v2 >= v3 else v3)
 
 
+@jit(nopython=True, cache=True)
+def _dp_fill_numba_standard(M, Ix, Iy, ref_seq, query_seq,
+                             match_score, mismatch_penalty,
+                             gap_open, gap_extend, go_ge,
+                             gap_exit_bonus, use_gap_exit,
+                             run_len, use_short_match,
+                             short_match_window, short_match_discount):
+    """Numba-JIT: standard Gotoh DP fill (no profiles, no homology)."""
+    m = len(ref_seq)
+    n = len(query_seq)
+    for i in range(1, m + 1):
+        r_char = ref_seq[i - 1]
+        for j in range(1, n + 1):
+            q_char = query_seq[j - 1]
+
+            # Substitution score
+            if use_short_match and r_char == q_char:
+                run = run_len[i - 1, j - 1]
+                if 0 < run <= short_match_window:
+                    s = match_score * short_match_discount
+                else:
+                    s = match_score
+            else:
+                s = match_score if r_char == q_char else mismatch_penalty
+
+            # M[i, j]
+            if use_gap_exit:
+                best_prev = max(M[i - 1, j - 1],
+                                Ix[i - 1, j - 1] + gap_exit_bonus,
+                                Iy[i - 1, j - 1] + gap_exit_bonus)
+            else:
+                best_prev = max(M[i - 1, j - 1], Ix[i - 1, j - 1], Iy[i - 1, j - 1])
+            M[i, j] = s + best_prev
+
+            # Ix[i, j] = max(M[i,j-1] + go+ge, Ix[i,j-1] + ge, Iy[i,j-1] + go+ge)
+            v1 = M[i, j - 1] + go_ge
+            v2 = Ix[i, j - 1] + gap_extend
+            v3 = Iy[i, j - 1] + go_ge
+            Ix[i, j] = v1 if v1 >= v2 and v1 >= v3 else (v2 if v2 >= v3 else v3)
+
+            # Iy[i, j] = max(M[i-1,j] + go+ge, Ix[i-1,j] + go+ge, Iy[i-1,j] + ge)
+            v1 = M[i - 1, j] + go_ge
+            v2 = Ix[i - 1, j] + go_ge
+            v3 = Iy[i - 1, j] + gap_extend
+            Iy[i, j] = v1 if v1 >= v2 and v1 >= v3 else (v2 if v2 >= v3 else v3)
+
+
 def affine_gap_alignment(ref_seq: str, query_seq: str,
                          match_score: float = 2.0,
                          mismatch_penalty: float = -3.0,
@@ -239,57 +286,25 @@ def affine_gap_alignment(ref_seq: str, query_seq: str,
         Iy[0, j] = -np.inf
 
     go_ge = gap_open + gap_extend
-    gap_exit_active = (gap_exit_bonus != 0.0)
-    short_match_active = (short_match_window > 0 and short_match_discount < 1.0)
+    use_gap_exit = (gap_exit_bonus != 0.0)
+    use_short_match = (short_match_window > 0 and short_match_discount < 1.0)
 
-    if short_match_active or gap_exit_active:
+    if use_short_match:
         is_match_arr = np.array([[ref_seq[i] == query_seq[j]
                                    for j in range(n)] for i in range(m)])
-        run_len = np.zeros((m + 1, n + 1), dtype=int)
-        for i in range(m - 1, -1, -1):
-            for j in range(n - 1, -1, -1):
-                if is_match_arr[i, j]:
-                    run_len[i, j] = 1 + run_len[i + 1, j + 1]
+        run_len = np.zeros((m + 1, n + 1), dtype=np.int32)
+        _compute_run_len_numba(is_match_arr, run_len, m, n)
+    else:
+        run_len = np.zeros((m + 1, n + 1), dtype=np.int32)
 
-    for i in range(1, m + 1):
-        Mi_1 = M[i - 1]; Mi = M[i]
-        Ixi_1 = Ix[i - 1]; Ixi = Ix[i]
-        Iyi_1 = Iy[i - 1]; Iyi = Iy[i]
-        r_char = ref_seq[i - 1]
-        if gap_exit_active:
-            for j in range(1, n + 1):
-                q_char = query_seq[j - 1]
-                if short_match_active and r_char == q_char:
-                    run = run_len[i - 1, j - 1]
-                    if 0 < run <= short_match_window:
-                        s = match_score * short_match_discount
-                    else:
-                        s = match_score
-                else:
-                    s = match_score if r_char == q_char else mismatch_penalty
-                best_prev = max(Mi_1[j - 1], Ixi_1[j - 1] + gap_exit_bonus, Iyi_1[j - 1] + gap_exit_bonus)
-                Mi[j] = s + best_prev
-                a, b, c = Mi[j - 1] + go_ge, Ixi[j - 1] + gap_extend, Iyi[j - 1] + go_ge
-                Ixi[j] = a if a >= b and a >= c else (b if b >= c else c)
-                a, b, c = Mi_1[j] + go_ge, Ixi_1[j] + go_ge, Iyi_1[j] + gap_extend
-                Iyi[j] = a if a >= b and a >= c else (b if b >= c else c)
-        else:
-            for j in range(1, n + 1):
-                q_char = query_seq[j - 1]
-                if short_match_active and r_char == q_char:
-                    run = run_len[i - 1, j - 1]
-                    if 0 < run <= short_match_window:
-                        s = match_score * short_match_discount
-                    else:
-                        s = match_score
-                else:
-                    s = match_score if r_char == q_char else mismatch_penalty
-                a, b, c = Mi_1[j - 1], Ixi_1[j - 1], Iyi_1[j - 1]
-                Mi[j] = s + (a if a >= b and a >= c else (b if b >= c else c))
-                a, b, c = Mi[j - 1] + go_ge, Ixi[j - 1] + gap_extend, Iyi[j - 1] + go_ge
-                Ixi[j] = a if a >= b and a >= c else (b if b >= c else c)
-                a, b, c = Mi_1[j] + go_ge, Ixi_1[j] + go_ge, Iyi_1[j] + gap_extend
-                Iyi[j] = a if a >= b and a >= c else (b if b >= c else c)
+    _dp_fill_numba_standard(
+        M, Ix, Iy, ref_seq, query_seq,
+        match_score, mismatch_penalty,
+        gap_open, gap_extend, go_ge,
+        gap_exit_bonus, use_gap_exit,
+        run_len, use_short_match,
+        short_match_window, short_match_discount,
+    )
 
     # Global alignment: only M[m, n] is valid at termination
     max_score = M[m, n]
@@ -301,8 +316,8 @@ def affine_gap_alignment(ref_seq: str, query_seq: str,
             aligned_ref.append(ref_seq[i - 1])
             aligned_query.append(query_seq[j - 1])
             scores = [M[i - 1, j - 1],
-                      Ix[i - 1, j - 1] + (gap_exit_bonus if gap_exit_active else 0),
-                      Iy[i - 1, j - 1] + (gap_exit_bonus if gap_exit_active else 0)]
+                      Ix[i - 1, j - 1] + (gap_exit_bonus if use_gap_exit else 0),
+                      Iy[i - 1, j - 1] + (gap_exit_bonus if use_gap_exit else 0)]
             state = ['M', 'Ix', 'Iy'][np.argmax(scores)]
             i -= 1; j -= 1
         elif state == 'Ix':
