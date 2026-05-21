@@ -304,7 +304,7 @@ def align_single(
         n3 = config.primer3_threshold
         return AlignmentResult.error_result(
             query,
-            f"引物比对质量不足: Primer5({p5_match}/{p5}<{n5}) "
+            f"引物锚定失败: Primer5({p5_match}/{p5}<{n5}) "
             f"Primer3({p3_match}/{p3}<{n3})",
         )
 
