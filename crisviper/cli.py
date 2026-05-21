@@ -37,7 +37,7 @@ from crisviper import (
 
 log = get_logger(__name__)
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 
 def _queries_to_records(queries: List[Dict]) -> List[QueryRecord]:

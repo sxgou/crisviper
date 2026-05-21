@@ -160,9 +160,9 @@ def save_summary_tables(results: List[Dict], output_dir: str,
             for cs in cutsites:
                 if not cs.name.startswith("Target"):
                     continue
-                # Full target 20bp region: conserved 13bp + cutsite 7bp
+                # Full target 27bp region: conserved 13bp + cutsite 7bp + PAM/Linker 7bp
                 target_start = cs.start - 13
-                target_end = cs.end
+                target_end = cs.end + 7
                 covering = 0
                 edited = 0
                 del_c = ins_c = sub_c = 0
@@ -309,12 +309,12 @@ def _save_event_level_table(successful: List[Dict], output_dir: str,
     """
     from collections import defaultdict
 
-    # Build target intervals (20bp region matching summary logic)
+    # Build target intervals (27bp: conserved 13bp + cutsite 7bp + PAM/Linker 7bp)
     target_intervals = []
     if cutsites:
         for cs in cutsites:
             if cs.name.startswith("Target"):
-                target_intervals.append((cs.name, cs.start - 13, cs.end))
+                target_intervals.append((cs.name, cs.start - 13, cs.end + 7))
 
     # Aggregate events by signature
     # key: (type, start_pos, length)
