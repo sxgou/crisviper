@@ -17,9 +17,9 @@ import sys
 import os
 import time
 # 防止 fork + NumPy 线程冲突（在 import crisviper 之前设置）
-os.environ.setdefault('OMP_NUM_THREADS', '1')
-os.environ.setdefault('MKL_NUM_THREADS', '1')
-os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
 
 import multiprocessing as mp
 from typing import List, Dict
@@ -317,6 +317,7 @@ def main():
         t = _log_timing(log, "结果转dict", t)
 
         # ── 保存结果 ──
+        os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
         save_alignment_results(output_results, args.output, args.format)
         t = _log_timing(log, "保存TSV结果", t)
 
