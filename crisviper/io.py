@@ -19,6 +19,21 @@ from crisviper.logging_config import get_logger
 log = get_logger(__name__)
 
 
+def _read_fastq_counts(fastq_path: str) -> Dict[str, int]:
+    """读取FASTQ文件，返回 {序列: 出现次数} 字典"""
+    counts = {}
+    if fastq_path.endswith('.gz'):
+        with gzip.open(fastq_path, 'rt') as f:
+            for record in SeqIO.parse(f, "fastq"):
+                seq = str(record.seq)
+                counts[seq] = counts.get(seq, 0) + 1
+    else:
+        for record in SeqIO.parse(fastq_path, "fastq"):
+            seq = str(record.seq)
+            counts[seq] = counts.get(seq, 0) + 1
+    return counts
+
+
 def fastq_to_dataframe(fastq_path: str, sample_name: str = "sample") -> List[Dict]:
     """
     将FASTQ文件转换为字典列表，每个字典代表一条唯一序列
@@ -30,16 +45,7 @@ def fastq_to_dataframe(fastq_path: str, sample_name: str = "sample") -> List[Dic
     返回:
         字典列表，每个字典包含readName, cellBC, UMI, readCount, seq字段
     """
-    counts = {}
-    if fastq_path.endswith('.gz'):
-        with gzip.open(fastq_path, 'rt') as f:
-            for record in SeqIO.parse(f, "fastq"):
-                seq = str(record.seq)
-                counts[seq] = counts.get(seq, 0) + 1
-    else:
-        for record in SeqIO.parse(fastq_path, "fastq"):
-            seq = str(record.seq)
-            counts[seq] = counts.get(seq, 0) + 1
+    counts = _read_fastq_counts(fastq_path)
 
     # 构建字典列表
     rows = []
@@ -65,16 +71,7 @@ def fastq_to_fasta(fastq_path: str, output_fasta: str, sample_name: str = "sampl
         output_fasta: 输出FASTA文件路径
         sample_name: 样本名称
     """
-    counts = {}
-    if fastq_path.endswith('.gz'):
-        with gzip.open(fastq_path, 'rt') as f:
-            for record in SeqIO.parse(f, "fastq"):
-                seq = str(record.seq)
-                counts[seq] = counts.get(seq, 0) + 1
-    else:
-        for record in SeqIO.parse(fastq_path, "fastq"):
-            seq = str(record.seq)
-            counts[seq] = counts.get(seq, 0) + 1
+    counts = _read_fastq_counts(fastq_path)
 
     with open(output_fasta, 'w') as f:
         for i, (seq, count) in enumerate(counts.items()):

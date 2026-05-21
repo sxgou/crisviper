@@ -41,7 +41,7 @@ def effective_alleles(
         return 0.0
     p = counts / counts.sum()
     H = -np.sum(p * np.log2(p))
-    return 2.0 ** H - 1.0 if len(p) > 0 else 0.0
+    return 2.0 ** H - 1.0
 
 
 def diversity_index(

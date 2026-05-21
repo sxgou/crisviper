@@ -127,8 +127,7 @@ def build_homology_penalty_profile(
             # Allow partial overlap at ends but not exact same position
             if abs(p - start) >= min(3, homology_window // 2):
                 count += 1
-                if count > 0:
-                    break  # one non-self occurrence is enough
+                break
             p += 1
         if count > 0:
             profile[i] = homology_penalty

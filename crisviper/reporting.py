@@ -737,8 +737,8 @@ def _write_results_txt(
                 f.write(f"  {label:<42} {n:>10} {nr:>10}\n")
 
         f.write(f"\n{'MUTATION STATS':<45}\n\n")
-        ins_events = sum(1 for r in mut_types if "I" in r)
-        del_events = sum(1 for r in mut_types if "D" in r)
+        ins_events = sum(v for k, v in mut_types.items() if "I" in k)
+        del_events = sum(v for k, v in mut_types.items() if "D" in k)
         sub_events = mut_types.get("S", 0) + mut_types.get("IS", 0) + mut_types.get("DS", 0) + mut_types.get("IDS", 0)
         f.write(f"{'  Edited sequences:':<45} {edited_seqs}\n")
         f.write(f"{'  Edited reads:':<45} {edited_reads:,}\n")

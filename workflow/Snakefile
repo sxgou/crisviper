@@ -113,7 +113,7 @@ rule align:
             lineage_mode=params.lineage,
             threads=params.threads,
         )
-        pipeline = Pipeline(ref_seq, config)
+        pipeline = Pipeline(config=config, ref_seq=ref_seq)
         result = pipeline.run(queries)
         save_alignment_results(
             [r.to_dict() for r in result.results],

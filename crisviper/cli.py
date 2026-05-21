@@ -16,6 +16,7 @@ import argparse
 import sys
 import os
 import time
+import multiprocessing as mp
 # 防止 fork + NumPy 线程冲突（在 import crisviper 之前设置）
 os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['MKL_NUM_THREADS'] = '1'
@@ -52,6 +53,10 @@ def _log_timing(logger, label: str, t_start: float) -> float:
 
 
 def main():
+    try:
+        mp.set_start_method('fork')
+    except RuntimeError:
+        pass
     setup_logging(quiet=False)
     parser = argparse.ArgumentParser(
         description="crisviper — 谱系示踪序列分析命令行工具",
@@ -384,8 +389,4 @@ def _get_display_cutsites(ref_seq: str):
 
 
 if __name__ == "__main__":
-    try:
-        mp.set_start_method('fork')
-    except RuntimeError:
-        pass
     main()

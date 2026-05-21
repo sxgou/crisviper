@@ -336,28 +336,3 @@ class PipelineResult:
         """获取所有无突变的结果"""
         return [r for r in self.get_successful()
                 if r.stats and not r.stats.has_mutation]
-
-
-# ═══════════════════════════════════════════════════════════════
-# 突变统计（用于报告）
-# ═══════════════════════════════════════════════════════════════
-
-@dataclass
-class MutationTypeCounts:
-    """各类突变类型的序列数和Reads数"""
-    only_insertion: int = 0
-    only_deletion: int = 0
-    only_substitution: int = 0
-    insertion_and_deletion: int = 0
-    insertion_and_substitution: int = 0
-    deletion_and_substitution: int = 0
-    all_three: int = 0
-
-    # 对应reads版本
-    only_insertion_reads: int = 0
-    only_deletion_reads: int = 0
-    only_substitution_reads: int = 0
-    insertion_and_deletion_reads: int = 0
-    insertion_and_substitution_reads: int = 0
-    deletion_and_substitution_reads: int = 0
-    all_three_reads: int = 0
