@@ -135,9 +135,9 @@ def save_summary_tables(results: List[Dict], output_dir: str,
     # 2. per_target_editing.tsv
     # ═══════════════════════════════════════════════════════════════
     def _mutation_overlaps_target(m: Dict, target_start: int, target_end: int) -> bool:
-        """判断突变是否与Target的20bp区域重叠（全长参考坐标）
+        """判断突变是否与Target重叠（全长参考坐标）
 
-        deletion/complex 使用跨度重叠检查（[pos, pos+len-1] 与 [ts, te] 相交）
+        deletion/indel 使用跨度重叠检查（[pos, pos+len-1] 与 [ts, te] 相交）
         substitution/insertion 使用点位置检查（pos in [ts, te]）
         """
         mp = m.get("ref_pos", -1)
@@ -150,11 +150,38 @@ def save_summary_tables(results: List[Dict], output_dir: str,
         else:
             return target_start <= mp <= target_end
 
+    def _is_intrasite(m: Dict, intervals: list) -> bool:
+        """判断del/indel突变是否完全处于某个target 27bp区域内。
+
+        对整个参考坐标上的跨度进行检查:
+          - 完全在一个 target 内 → intrasite
+          - 跨越两个及以上 target → intersite
+        对 ins/sub 直接返回 True（单碱基事件，只在一个 target 内）
+        """
+        mt = m.get("type", "")
+        if mt in ("insertion", "substitution"):
+            return True
+        mp = m.get("ref_pos", -1)
+        me = mp + m.get("length", 1) - 1
+        for _, ts, te in intervals:
+            if mp >= ts and me <= te:
+                return True
+        return False
+
+    # Pre-build all 27bp target intervals for intra/inter classification
+    all_target_intervals = []
+    if cutsites:
+        for cs in cutsites:
+            if cs.name.startswith("Target"):
+                all_target_intervals.append((cs.name, cs.start - 13, cs.end + 7))
+
     path_pt = os.path.join(output_dir, "per_target_editing.tsv")
+    fieldnames_pt = ["Target", "Total", "Edited", "Rate_Pct",
+                     "Del_intra", "Del_inter", "Ins",
+                     "Indel_intra", "Indel_inter", "Sub",
+                     "Avg_Mut_Length", "Wt"]
     with open(path_pt, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=["Target", "Total", "Edited", "Rate_Pct",
-                                                "Del", "Ins", "Sub", "Avg_Mut_Length"],
-                                delimiter='\t')
+        writer = csv.DictWriter(f, fieldnames=fieldnames_pt, delimiter='\t')
         writer.writeheader()
         if cutsites:
             for cs in cutsites:
@@ -165,7 +192,10 @@ def save_summary_tables(results: List[Dict], output_dir: str,
                 target_end = cs.end + 7
                 covering = 0
                 edited = 0
-                del_c = ins_c = sub_c = 0
+                del_intra_c = del_inter_c = 0
+                ins_c = 0
+                indel_intra_c = indel_inter_c = 0
+                sub_c = 0
                 total_len_weighted = 0.0
                 total_len_weight = 0
                 for r in successful:
@@ -184,8 +214,12 @@ def save_summary_tables(results: List[Dict], output_dir: str,
                         has_mut = True
                         mt = m.get("type", "")
                         ml = m.get("length", 1)
+                        intra = _is_intrasite(m, all_target_intervals)
                         if mt == "deletion":
-                            del_c += rc
+                            if intra:
+                                del_intra_c += rc
+                            else:
+                                del_inter_c += rc
                             total_len_weighted += ml * rc
                             total_len_weight += rc
                         elif mt == "insertion":
@@ -193,9 +227,10 @@ def save_summary_tables(results: List[Dict], output_dir: str,
                             total_len_weighted += ml * rc
                             total_len_weight += rc
                         elif mt == "indel":
-                            # indel = 删除 + 插入复合事件，同时计入两者
-                            del_c += rc
-                            ins_c += rc
+                            if intra:
+                                indel_intra_c += rc
+                            else:
+                                indel_inter_c += rc
                             total_len_weighted += ml * rc
                             total_len_weight += rc
                         elif mt == "substitution":
@@ -204,16 +239,22 @@ def save_summary_tables(results: List[Dict], output_dir: str,
                         edited += rc
                 rate = f"{edited/covering*100:.1f}" if covering else "NA"
                 avg_len = f"{total_len_weighted/total_len_weight:.1f}" if total_len_weight > 0 else "NA"
+                wt = covering - edited
                 writer.writerow({
                     "Target": cs.name, "Total": covering,
                     "Edited": edited, "Rate_Pct": rate,
-                    "Del": del_c, "Ins": ins_c, "Sub": sub_c,
-                    "Avg_Mut_Length": avg_len,
+                    "Del_intra": del_intra_c, "Del_inter": del_inter_c,
+                    "Ins": ins_c,
+                    "Indel_intra": indel_intra_c, "Indel_inter": indel_inter_c,
+                    "Sub": sub_c,
+                    "Avg_Mut_Length": avg_len, "Wt": wt,
                 })
         else:
             writer.writerow({"Target": "No cutsite data available",
                             "Total": "", "Edited": "", "Rate_Pct": "",
-                            "Del": "", "Ins": "", "Sub": "", "Avg_Mut_Length": ""})
+                            "Del_intra": "", "Del_inter": "",
+                            "Ins": "", "Indel_intra": "", "Indel_inter": "",
+                            "Sub": "", "Avg_Mut_Length": "", "Wt": ""})
     log.info("Per-target编辑表已保存至 %s", path_pt)
 
     # ═══════════════════════════════════════════════════════════════
