@@ -33,6 +33,39 @@ def save_summary_tables(results: List[Dict], output_dir: str,
     total_reads_success = sum(r.get("readCount", 1) for r in successful)
 
     # ── 辅助: 生成 Allele 标签 ──
+    def _split_indel(m: Dict) -> List[str]:
+        """将 INDEL 事件解析为独立的 del/ins 描述列表。"""
+        ref_base = m.get("ref_base", "")
+        query_base = m.get("query_base", "")
+        ref_pos = m.get("ref_pos", 0)
+        if not ref_base or not query_base:
+            return [f"indel:{ref_pos}-{m.get('length', 1)}bp"]
+        parts = []
+        i = 0
+        while i < len(ref_base):
+            rb = ref_base[i]
+            qb = query_base[i]
+            if rb != '-' and qb == '-':
+                del_start = ref_pos
+                del_len = 0
+                while i < len(ref_base) and ref_base[i] != '-' and query_base[i] == '-':
+                    ref_pos += 1
+                    del_len += 1
+                    i += 1
+                parts.append(f"del:{del_start}-{del_len}bp")
+            elif rb == '-' and qb != '-':
+                ins_start = ref_pos
+                ins_len = 0
+                while i < len(ref_base) and ref_base[i] == '-' and query_base[i] != '-':
+                    ins_len += 1
+                    i += 1
+                parts.append(f"ins:{ins_start}+{ins_len}bp")
+            else:
+                if rb != '-':
+                    ref_pos += 1
+                i += 1
+        return parts if parts else [f"indel:{ref_pos}-{m.get('length', 1)}bp"]
+
     def _allele_label(mutations: List[Dict]) -> str:
         if not mutations:
             return "wt"
@@ -44,6 +77,8 @@ def save_summary_tables(results: List[Dict], output_dir: str,
                 parts.append(f"del:{pos}-{m.get('length', 1)}bp")
             elif typ == "insertion":
                 parts.append(f"ins:{pos}+{m.get('length', 1)}bp")
+            elif typ == "indel":
+                parts.extend(_split_indel(m))
             elif typ == "substitution":
                 parts.append(f"sub:{pos}{m.get('ref_base', '?')}>{m.get('query_base', '?')}")
             else:
@@ -53,12 +88,14 @@ def save_summary_tables(results: List[Dict], output_dir: str,
     def _mutation_type_label(mutations: List[Dict]) -> str:
         has_del = any(m.get("type") == "deletion" for m in mutations)
         has_ins = any(m.get("type") == "insertion" for m in mutations)
+        has_indel = any(m.get("type") == "indel" for m in mutations)
         has_sub = any(m.get("type") == "substitution" for m in mutations)
-        if not (has_del or has_ins or has_sub):
+        if not (has_del or has_ins or has_indel or has_sub):
             return "wt"
         parts = []
         if has_del: parts.append("del")
         if has_ins: parts.append("ins")
+        if has_indel: parts.append("indel")
         if has_sub: parts.append("sub")
         return "+".join(parts)
 
@@ -155,8 +192,8 @@ def save_summary_tables(results: List[Dict], output_dir: str,
                             ins_c += rc
                             total_len_weighted += ml * rc
                             total_len_weight += rc
-                        elif mt == "complex":
-                            # complex = 删除 + 插入复合事件，同时计入两者
+                        elif mt == "indel":
+                            # indel = 删除 + 插入复合事件，同时计入两者
                             del_c += rc
                             ins_c += rc
                             total_len_weighted += ml * rc

@@ -5,8 +5,12 @@ Includes single-cell 10x and InDrops/BGI FASTQ parsing
 """
 
 import sys
+import os
 import gzip
 import csv
+import shutil
+import subprocess
+import tempfile
 from typing import List, Dict, Optional, Tuple
 from collections import Counter
 from Bio import SeqIO
@@ -79,6 +83,121 @@ def fastq_to_fasta(fastq_path: str, output_fasta: str, sample_name: str = "sampl
 
     total_reads = sum(counts.values())
     log.info("已将 %d 条唯一序列（%d 条reads）写入 %s", len(counts), total_reads, output_fasta)
+
+
+def fastq_to_fasta_from_rows(rows: List[Dict], output_path: str) -> None:
+    """将字典列表（merge_paired_end/fastq_to_dataframe 输出格式）写入FASTA。
+
+    参数:
+        rows: 字典列表，包含 readName, cellBC, UMI, readCount, seq
+        output_path: 输出FASTA文件路径
+    """
+    with open(output_path, 'w') as f:
+        for row in rows:
+            f.write(f">{row['readName']} cellBC={row['cellBC']} "
+                    f"UMI={row['UMI']} readCount={row['readCount']}\n"
+                    f"{row['seq']}\n")
+    log.info("数据已保存至 %s", output_path)
+
+
+def _check_fastp() -> None:
+    """检查fastp是否可用，否则退出。"""
+    if shutil.which("fastp") is None:
+        log.error("fastp 未安装。双端合并需要 fastp，请执行: "
+                  "brew install fastp  # macOS 或 "
+                  "conda install -c bioconda fastp  # conda")
+        sys.exit(1)
+
+
+def merge_paired_end(
+    fastq1: str,
+    fastq2: str,
+    min_overlap: int = 10,
+    max_mismatch_rate: int = 20,
+    max_mismatch_diff: int = 5,
+    require_qual: int = 15,
+    sample_name: str = "sample",
+) -> List[Dict]:
+    """调用 fastp 合并双端测序 reads，返回去重后的字典列表。
+
+    参数:
+        fastq1: R1 FASTQ 文件路径
+        fastq2: R2 FASTQ 文件路径
+        min_overlap: 最小 overlap 长度（fastp: overlap_len_require）
+        max_mismatch_rate: Overlap 错配比例上限 %（fastp: overlap_diff_percent_limit）
+        max_mismatch_diff: Overlap 最大错配绝对数（fastp: overlap_diff_limit）
+        require_qual: 碱基质量阈值（fastp: -q）
+        sample_name: 样本名称
+
+    返回:
+        字典列表（与 fastq_to_dataframe 格式一致）
+    """
+    _check_fastp()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        merged_out = os.path.join(tmpdir, "merged.fastq")
+        unmerged1 = os.path.join(tmpdir, "unmerged_R1.fastq")
+        unmerged2 = os.path.join(tmpdir, "unmerged_R2.fastq")
+
+        cmd = [
+            "fastp",
+            "-i", fastq1,
+            "-I", fastq2,
+            "-m",
+            "--merged_out", merged_out,
+            "--out1", unmerged1,
+            "--out2", unmerged2,
+            "--overlap_len_require", str(min_overlap),
+            "--overlap_diff_percent_limit", str(max_mismatch_rate),
+            "--overlap_diff_limit", str(max_mismatch_diff),
+            "-q", str(require_qual),
+            "-j", "/dev/null",
+            "-h", "/dev/null",
+        ]
+
+        log.info("运行 fastp 合并双端 reads...")
+        log.debug("  cmd: %s", " ".join(cmd))
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            if result.stdout:
+                for line in result.stdout.splitlines():
+                    log.debug("  fastp: %s", line)
+        except subprocess.CalledProcessError as e:
+            log.error("fastp 运行失败 (exit %d)", e.returncode)
+            if e.stderr:
+                for line in e.stderr.splitlines():
+                    log.error("  %s", line)
+            sys.exit(1)
+
+        # 读取合并结果
+        counts = {}
+        if not os.path.exists(merged_out) or os.path.getsize(merged_out) == 0:
+            log.warning("fastp 未产生任何合并 reads！")
+            return []
+
+        with open(merged_out) as f:
+            for record in SeqIO.parse(f, "fastq"):
+                seq = str(record.seq)
+                counts[seq] = counts.get(seq, 0) + 1
+
+        if not counts:
+            log.warning("fastp 未产生任何合并 reads！")
+            return []
+
+        rows = []
+        for i, (seq, count) in enumerate(counts.items()):
+            rows.append({
+                "readName": f"{sample_name}_seq{i+1}",
+                "cellBC": sample_name,
+                "UMI": f"UMI{i+1}",
+                "readCount": count,
+                "seq": seq,
+            })
+
+        log.info("fastp 合并完成: %d 条唯一序列（总计 %d 条reads）",
+                 len(rows), sum(counts.values()))
+        return rows
 
 
 def save_tsv(rows: List[Dict], output_path: str) -> None:

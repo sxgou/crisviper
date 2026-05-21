@@ -37,7 +37,8 @@ from crisviper.mutation import (
 )
 from crisviper.pipeline import Pipeline, align_single, check_primer_anchoring
 from crisviper.io import (
-    fastq_to_dataframe, fastq_to_fasta, save_tsv,
+    fastq_to_dataframe, fastq_to_fasta, fastq_to_fasta_from_rows,
+    merge_paired_end, save_tsv,
     read_reference_fasta, read_queries_tsv, read_queries_fasta,
     parse_10x_fastq, parse_10x_provenance,
     filter_sc_cbs_and_umis, parse_indrops_provenance,
