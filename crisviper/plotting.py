@@ -285,7 +285,7 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
     fig_h = max(3, fig_h_px / dpi)
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-    ax.set_xlim(0, grid_cols)
+    ax.set_xlim(0, grid_cols + 3)
     ax.set_ylim(-2.5, n_rows + 2.5)
     ax.set_aspect('equal')
     ax.axis('off')

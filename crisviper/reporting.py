@@ -139,7 +139,6 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
 
     # 统计突变
     mutated_seqs = []
-    unmutated_seqs = []
     for r in successful:
         stats = r["stats"]
         has_mismatch = stats["mismatches"] > 0
@@ -147,11 +146,9 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
         has_insertion = stats["gaps_in_ref"] > 0
         if has_mismatch or has_deletion or has_insertion:
             mutated_seqs.append(r)
-        else:
-            unmutated_seqs.append(r)
 
     total_mutated = len(mutated_seqs)
-    total_unmutated = len(unmutated_seqs)
+    total_unmutated = total_successful - total_mutated
     mutated_reads = sum(r.get("readCount", 1) for r in mutated_seqs)
     efficiency = total_mutated / total_successful * 100 if total_successful > 0 else 0.0
 
@@ -744,11 +741,12 @@ def _write_results_txt(
         f.write(f"{'  Edited reads:':<45} {edited_reads:,}\n")
         f.write(f"{'  Events with insertion:':<45} {ins_events}\n")
         f.write(f"{'  Events with deletion:':<45} {del_events}\n")
+        f.write(f"{'  Events with substitution:':<45} {sub_events}\n")
 
         if called_alleles:
             f.write(f"\n{'ALLELES':<45}\n\n")
             f.write(f"{'  Total alleles:':<45} {len(called_alleles)}\n")
-            singletons = sum(1 for a in called_alleles if a.get("freq", 0) == 1)
+            singletons = sum(1 for a in called_alleles if a.weight == 1)
             f.write(f"{'  Singletons:':<45} {singletons}\n")
 
     log.info("Results.txt saved: %s", path)
