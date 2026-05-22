@@ -653,6 +653,7 @@ class Pipeline:
         # 并行执行
         results = []
 
+        processed_indices = set()
         if threads > 1:
             try:
                 with ProcessPoolExecutor(max_workers=threads) as executor:
@@ -662,19 +663,26 @@ class Pipeline:
                         config=self.config,
                         cutsites=self.cutsites,
                     )
-                    futures = {executor.submit(chunk_func, ch): ch for ch in chunks}
-                    for future in as_completed(futures):
+                    future_to_idx = {executor.submit(chunk_func, ch): i for i, ch in enumerate(chunks)}
+                    for future in as_completed(future_to_idx):
+                        idx = future_to_idx[future]
                         try:
                             results.extend(future.result())
+                            processed_indices.add(idx)
                         except Exception as e:
-                            log.error("  批次处理失败 (跳过): %s", e)
+                            log.error("  批次 %d 处理失败 (跳过): %s", idx, e)
             except BrokenProcessPool:
-                log.warning("ProcessPoolExecutor 崩溃 (BrokenProcessPool)，回退到单线程处理")
-        if not results:
-            # ProcessPoolExecutor 失败或 threads <= 1
-            log.info("  使用单线程处理 %d 条序列...", total)
-            for chunk in chunks:
-                results.extend(_process_chunk(chunk, self.ref_seq, self.config, self.cutsites))
+                log.warning("ProcessPoolExecutor 崩溃 (BrokenProcessPool)，将补处理未完成的批次")
+
+        # 补处理因 BrokenProcessPool 而未完成的 chunks（也覆盖 threads <= 1 的情况）
+        remaining_indices = set(range(len(chunks))) - processed_indices
+        if remaining_indices:
+            if threads > 1 and processed_indices:
+                log.info("  补处理 %d 个未完成的批次...", len(remaining_indices))
+            else:
+                log.info("  使用单线程处理 %d 条序列...", total)
+            for i in remaining_indices:
+                results.extend(_process_chunk(chunks[i], self.ref_seq, self.config, self.cutsites))
 
         # ── 等位基因调用（可选） ──
         called_alleles = []
