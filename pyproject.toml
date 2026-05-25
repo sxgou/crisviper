@@ -19,6 +19,7 @@ dependencies = [
     "matplotlib>=3.3.0",
     "jinja2>=3.0",
     "numba>=0.55.0",
+    "pyyaml>=5.1",
 ]
 
 classifiers = [

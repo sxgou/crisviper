@@ -17,28 +17,28 @@ from crisviper import (
 )
 
 # ═══════════════════════════════════════════════════════════════
-# 单元测试：gap_exit_bonus 数学正确性
+# Unit tests: gap_exit_bonus mathematical correctness
 # ═══════════════════════════════════════════════════════════════
 
 class TestGapExitBonusMath:
-    """直接验证 gap_exit_bonus 的数学效果"""
+    """Directly verify the mathematical effect of gap_exit_bonus"""
 
     def test_parameter_default_is_zero(self):
-        """默认 gap_exit_bonus=0.0，行为与原始代码一致"""
+        """Default gap_exit_bonus=0.0, behavior matches original code"""
         s1, _, aq1, _ = affine_gap_alignment("ACGT", "ACCT")
         s2, _, aq2, _ = affine_gap_alignment("ACGT", "ACCT", gap_exit_bonus=0.0)
         assert s1 == s2
         assert aq1 == aq2
 
     def test_negative_bonus_lowers_score(self):
-        """负 bonus 降低比对分数（因为 M 路径从 Ix/Iy 可选值被压低）"""
+        """Negative bonus lowers alignment score (because M path values from Ix/Iy are reduced)"""
         ref, qry = "AAAAATTTTT", "AAAATTTTT"
         s0 = affine_gap_alignment(ref, qry, gap_exit_bonus=0.0)[0]
         s1 = affine_gap_alignment(ref, qry, gap_exit_bonus=-1.0)[0]
         assert s1 <= s0, f"Score with bonus {s1} > without {s0}"
 
     def test_monotonic_decreasing_score(self):
-        """bonus 越负，比对分数单调不增"""
+        """The more negative the bonus, the alignment score is monotonically non-increasing"""
         ref, qry = "GACTGCACGACAGTCGAT", "GACTGCAGTCGAT"
         prev = float('inf')
         for bonus in [0.0, -0.5, -1.0, -1.5, -2.0]:
@@ -47,7 +47,7 @@ class TestGapExitBonusMath:
             prev = s
 
     def test_bonus_affects_m_score_via_ix_and_iy(self):
-        """验证 M[i,j] 的计算使用 max(M, Ix+bonus, Iy+bonus) 语义"""
+        """Verify M[i,j] computation uses max(M, Ix+bonus, Iy+bonus) semantics"""
         ref, qry = "ATGC", "AG"
         s0, ar0, aq0, st0 = affine_gap_alignment(ref, qry, gap_exit_bonus=0.0)
         s1, ar1, aq1, st1 = affine_gap_alignment(ref, qry, gap_exit_bonus=-2.0)
@@ -55,7 +55,7 @@ class TestGapExitBonusMath:
         assert st0["alignment_length"] == st1["alignment_length"]
 
     def test_position_aware_bonus_affects_score(self):
-        """位置感知 DP 中 bonus 同样降低分数"""
+        """Bonus also lowers score in position-aware DP"""
         go = np.full(12, -2.0)
         ge = np.full(12, -0.1)
         ref, qry = "AAAACCCCGGGG", "AAAAGGGG"
@@ -64,7 +64,7 @@ class TestGapExitBonusMath:
         assert s1 <= s0
 
     def test_lineage_tracer_bonus_affects_score(self):
-        """lineage_tracer_align 中 bonus 降低分数"""
+        """Bonus lowers score in lineage_tracer_align"""
         cutsites = [CutsiteRegion("T1", 4, 7)]
         ref, qry = "AAAACCCCGGGG", "AAAAGGGG"
         s0 = lineage_tracer_align(ref, qry, cutsites, gap_exit_bonus=0.0)[0]
@@ -72,7 +72,7 @@ class TestGapExitBonusMath:
         assert s1 <= s0
 
     def test_bonus_does_not_change_identical_alignments(self):
-        """相同序列比对不受 bonus 影响"""
+        """Identical sequence alignment is unaffected by bonus"""
         for bonus in [0.0, -1.0, -2.0]:
             s, ar, aq, st = affine_gap_alignment("ACGTACGT", "ACGTACGT",
                                                    gap_exit_bonus=bonus)
@@ -82,7 +82,7 @@ class TestGapExitBonusMath:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 集成测试：gap_exit_bonus 通过 Pipeline 工作
+# Integration tests: gap_exit_bonus works through the Pipeline
 # ═══════════════════════════════════════════════════════════════
 
 CARLIN_REF = (
@@ -111,7 +111,7 @@ CARLIN_REF = (
 )
 
 class TestPipelineGapExitBonus:
-    """验证 gap_exit_bonus 通过完整Pipeline工作"""
+    """Verify gap_exit_bonus works through the complete Pipeline"""
 
     def make_query(self, seq: str, name: str = "test", rc: int = 50):
         return QueryRecord(readName=name, cellBC="test", UMI="UMI",
@@ -171,7 +171,7 @@ class TestPipelineGapExitBonus:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Phase A3: 短匹配区域折扣
+# Phase A3: Short match region discount
 # ═══════════════════════════════════════════════════════════════
 
 class TestShortMatchDiscount:
@@ -208,7 +208,7 @@ class TestShortMatchDiscount:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Phase A3: 密集错配区域惩罚
+# Phase A3: Dense mismatch region penalty
 # ═══════════════════════════════════════════════════════════════
 
 class TestDenseMismatchPenalty:
@@ -261,7 +261,7 @@ class TestDenseMismatchPenalty:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Phase A3: 组合参数
+# Phase A3: Combined parameters
 # ═══════════════════════════════════════════════════════════════
 
 class TestCombinedParameters:
@@ -282,7 +282,7 @@ class TestCombinedParameters:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Phase A4: 同源区域惩罚profile
+# Phase A4: Homology region penalty profile
 # ═══════════════════════════════════════════════════════════════
 
 class TestHomologyPenalty:
@@ -329,7 +329,7 @@ class TestHomologyPenalty:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Phase A5: 孤立碱基惩罚
+# Phase A5: Isolated base penalty
 # ═══════════════════════════════════════════════════════════════
 
 class TestIsolatedBasePenalty:
@@ -363,11 +363,11 @@ class TestIsolatedBasePenalty:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Phase A1: 矫正管线控制
+# Phase A1: Correction pipeline controls
 # ═══════════════════════════════════════════════════════════════
 
 # ═══════════════════════════════════════════════════════════════
-# Phase B: 全部参数组合验证
+# Phase B: All parameter combinations verification
 # ═══════════════════════════════════════════════════════════════
 
 class TestAllParametersCombined:

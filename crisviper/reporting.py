@@ -1,4 +1,11 @@
-"""crisviper/reporting.py — 报告生成和结果保存模块"""
+"""crisviper/reporting.py — Report generation and result serialization module.
+
+Handles output of analysis results in multiple formats:
+  - JSON: Full structured report with summary, mutation types, per-target stats
+  - HTML: Self-contained visual report with embedded charts (requires matplotlib)
+  - TSV: Tab-separated simplified alignment results
+  - Text: MATLAB-compatible Results.txt + Warnings.txt + AlleleAnnotations.txt
+"""
 
 import json
 import csv
@@ -15,48 +22,48 @@ log = get_logger(__name__)
 
 def save_alignment_results(results: List[Dict], output_path: str, fmt: str = "json") -> None:
     """
-    保存比对结果
+    Save alignment results to disk in the specified format.
 
-    参数:
-        results: 比对结果列表
-        output_path: 输出文件路径
-        fmt: 输出格式 (json, tsv, all)
+    Args:
+        results: List of alignment result dicts.
+        output_path: Output file path.
+        fmt: Output format. One of "json", "tsv", "all" (both json and tsv).
     """
     if fmt == "json":
         path = _ensure_extension(output_path, ".json")
         with open(path, 'w') as f:
             json.dump(results, f, indent=2, default=str)
-        log.info("JSON结果已保存至 %s", path)
+        log.info("JSON results saved to %s", path)
 
     elif fmt == "tsv":
         path = _ensure_extension(output_path, ".tsv")
         _save_tsv_results(results, path)
 
     elif fmt == "all":
-        # 同时输出JSON和TSV
+        # Save both JSON and TSV simultaneously
         json_path = _ensure_extension(output_path, ".json")
         tsv_path = _ensure_extension(output_path, ".tsv")
 
         with open(json_path, 'w') as f:
             json.dump(results, f, indent=2, default=str)
-        log.info("JSON结果已保存至 %s", json_path)
+        log.info("JSON results saved to %s", json_path)
 
         _save_tsv_results(results, tsv_path)
 
     else:
-        log.error("不支持的输出格式: %s", fmt)
+        log.error("Unsupported output format: %s", fmt)
         sys.exit(1)
 
 
 def _ensure_extension(path: str, ext: str) -> str:
-    """确保文件路径有指定的扩展名"""
+    """Ensure the file path has the specified extension, adding it if not."""
     if not path.endswith(ext):
         return path + ext
     return path
 
 
 def _save_tsv_results(results: List[Dict], output_path: str) -> None:
-    """将比对结果保存为TSV格式，包含对齐后的序列"""
+    """Save alignment results in simplified TSV format including aligned sequences."""
     simplified = []
     for result in results:
         if "error" in result:
@@ -99,11 +106,11 @@ def _save_tsv_results(results: List[Dict], output_path: str) -> None:
         writer.writeheader()
         writer.writerows(simplified)
 
-    log.info("TSV结果已保存至 %s", output_path)
+    log.info("TSV results saved to %s", output_path)
 
 
 # ═══════════════════════════════════════════════════════════════
-# 分析报告生成
+# Analysis report generation
 # ═══════════════════════════════════════════════════════════════
 
 def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
@@ -114,19 +121,26 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
                      allele_top_n: int = 50,
                      version: str = "2.1.0") -> None:
     """
-    生成突变分析报告
+    Generate a mutation analysis report in the specified format.
 
-    参数:
-        results: 比对结果列表
-        output_path: 输出文件路径
-        format: 报告格式 (json, html)
-        ref_length: 参考序列长度（用于图表）
-        ref_seq: 参考序列（用于allele热图）
-        cutsites: cutsite区域列表（用于allele热图标注）
-        allele_window_start: Allele热图显示起始位置
-        allele_window_end: Allele热图显示结束位置（含）
-        allele_top_n: Allele热图展示的top allele数（默认50）
-        version: 工具版本号
+    Produces a comprehensive report including:
+      - Summary statistics (total reads/sequences, alignment rates, editing efficiency)
+      - Mutation type breakdown (sequence counts + read counts)
+      - Indel length distributions (sequence-level and read-weighted)
+      - Per-target editing efficiency (when cutsites are available)
+      - Mutated sequence details with HGVS annotations
+
+    Args:
+        results: List of alignment result dicts.
+        output_path: Output file path (extension adjusted per format).
+        fmt: Report format ("json" or "html").
+        ref_length: Reference sequence length (for charts).
+        ref_seq: Reference sequence string (for allele heatmap).
+        cutsites: List of cutsite regions (for per-target stats and heatmap annotations).
+        allele_window_start: Start position for allele heatmap window.
+        allele_window_end: End position for allele heatmap window (inclusive).
+        allele_top_n: Number of top alleles to show in heatmap (default 50).
+        version: Tool version string.
     """
     total_sequences = len(results)
     successful = [r for r in results if "error" not in r]
@@ -137,7 +151,7 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
     total_reads = sum(r.get("readCount", 1) for r in successful)
     total_reads_all = sum(r.get("readCount", 1) for r in results)
 
-    # 统计突变
+    # Count mutations across all sequences
     mutated_seqs = []
     for r in successful:
         stats = r["stats"]
@@ -152,7 +166,7 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
     mutated_reads = sum(r.get("readCount", 1) for r in mutated_seqs)
     efficiency = total_mutated / total_successful * 100 if total_successful > 0 else 0.0
 
-    # 突变类型统计（序列数 + Reads数）
+    # Mutation type breakdown (sequence-level + reads-level)
     only_insertion = {"sequences": 0, "reads": 0}
     only_deletion = {"sequences": 0, "reads": 0}
     only_substitution = {"sequences": 0, "reads": 0}
@@ -161,10 +175,10 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
     deletion_and_substitution = {"sequences": 0, "reads": 0}
     all_three = {"sequences": 0, "reads": 0}
 
-    ins_lengths = []     # 插入长度列表（每条序列一次）
-    del_lengths = []     # 删除长度列表（每条序列一次）
-    ins_length_reads = Counter()   # 插入长度 → Reads数
-    del_length_reads = Counter()   # 删除长度 → Reads数
+    ins_lengths = []     # Insertion lengths (per-sequence)
+    del_lengths = []     # Deletion lengths (per-sequence)
+    ins_length_reads = Counter()   # Insertion length → Reads map
+    del_length_reads = Counter()   # Deletion length → Reads map
     total_mismatches = 0
 
     for r in mutated_seqs:
@@ -196,12 +210,12 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
             all_three["sequences"] += 1
             all_three["reads"] += rc
 
-        # 收集插入长度（序列级 + Reads加权）
+        # Collect insertion lengths (sequence-level + read-weighted)
         for block in stats.get("gap_blocks_ref", []):
             ins_lengths.append(block)
             ins_length_reads[block] += rc
 
-        # 收集删除长度（序列级 + Reads加权）
+        # Collect deletion lengths (sequence-level + read-weighted)
         for block in stats.get("gap_blocks_query", []):
             del_lengths.append(block)
             del_length_reads[block] += rc
@@ -213,7 +227,7 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
     max_insertion_len = max(ins_lengths) if ins_lengths else 0
     max_deletion_len = max(del_lengths) if del_lengths else 0
 
-    # Reads加权的平均/最大长度
+    # Read-weighted average and max lengths
     total_ins_reads = sum(ins_length_reads.values())
     total_del_reads = sum(del_length_reads.values())
     avg_ins_len_reads = (sum(k * v for k, v in ins_length_reads.items()) / total_ins_reads
@@ -221,9 +235,9 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
     avg_del_len_reads = (sum(k * v for k, v in del_length_reads.items()) / total_del_reads
                          if total_del_reads else 0.0)
 
-    # 构建报告字典
+    # Build the report dictionary
     report = {
-        "tool": "CARLIN序列分析工具",
+        "tool": "CARLIN Sequence Analysis Tool",
         "version": version,
         "summary": {
             "total_sequences": total_sequences,
@@ -310,7 +324,7 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
         path = _ensure_extension(output_path, ".json")
         with open(path, 'w') as f:
             json.dump(report, f, indent=2, default=str)
-        log.info("JSON分析报告已保存至 %s", path)
+        log.info("JSON analysis report saved to %s", path)
 
     elif fmt == "html":
         path = _ensure_extension(output_path, ".html")
@@ -321,31 +335,31 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
                                   allele_top_n=allele_top_n)
         _save_report_html(report, path, charts,
                             ref_seq=ref_seq, cutsites=cutsites)
-        log.info("HTML分析报告已保存至 %s", path)
+        log.info("HTML analysis report saved to %s", path)
 
     else:
-        log.error("不支持的报告格式: %s", fmt)
+        log.error("Unsupported report format: %s", fmt)
         sys.exit(1)
 
 
 def _save_report_html(report: dict, output_path: str, charts: dict = None,
                        ref_seq: str = "", cutsites: list = None) -> None:
-    """将报告保存为自包含的HTML文件（包含丰富的可视化元素）"""
+    """Save the report as a self-contained HTML file with embedded charts and interactive tables."""
     s = report["summary"]
     mt = report["mutation_types"]
     ms = report["mutation_stats"]
     detail = report["mutated_sequences_detail"]
 
-    # 突变类型表格行
+    # Mutation type table rows
     type_rows = ""
     type_labels = [
-        ("only_substitution", "仅点突变（替换）"),
-        ("only_deletion", "仅删除"),
-        ("only_insertion", "仅插入"),
-        ("insertion_and_deletion", "插入 + 删除"),
-        ("insertion_and_substitution", "插入 + 点突变"),
-        ("deletion_and_substitution", "删除 + 点突变"),
-        ("insertion_deletion_substitution", "插入 + 删除 + 点突变"),
+        ("only_substitution", "Substitution Only"),
+        ("only_deletion", "Deletion Only"),
+        ("only_insertion", "Insertion Only"),
+        ("insertion_and_deletion", "Insertion + Deletion"),
+        ("insertion_and_substitution", "Insertion + Substitution"),
+        ("deletion_and_substitution", "Deletion + Substitution"),
+        ("insertion_deletion_substitution", "All Three Types"),
     ]
     for key, label in type_labels:
         val = mt.get(key, {"sequences": 0, "reads": 0})
@@ -364,7 +378,7 @@ def _save_report_html(report: dict, output_path: str, charts: dict = None,
             f"</tr>\n"
         )
 
-    # 详细序列表格
+    # Detailed sequence table HTML rows
     MUT_CLASSES = {"deletion": "mut-del", "insertion": "mut-ins", "substitution": "mut-sub"}
 
     def _mut_summary(muts):
@@ -405,13 +419,13 @@ def _save_report_html(report: dict, output_path: str, charts: dict = None,
             f"</tr>\n"
         )
     if len(detail) > 100:
-        detail_rows += f"<tr><td colspan='8' style='text-align:center;color:#888;'>... 还有 {len(detail)-100} 条突变序列未显示</td></tr>\n"
+        detail_rows += f"<tr><td colspan='8' style='text-align:center;color:#888;'>... and {len(detail)-100} more mutated sequences not shown</td></tr>\n"
 
-    # 图表嵌入
+    # Embed chart images
     def _img_html(key):
         b64 = (charts or {}).get(key, '')
         if not b64:
-            return '<p style="color:#999;font-style:italic;">图表不可用</p>'
+            return '<p style="color:#999;font-style:italic;">Chart not available</p>'
         klass = 'chart-img' if key != 'allele_heatmap' else 'chart-img allele-img'
         return f'<div class="chart-scroll"><img class="{klass}" src="data:image/png;base64,{b64}" onclick="openModal(this)" /></div>'
 
@@ -681,7 +695,7 @@ def _write_allele_annotations(
                 f.write(ann + "\n")
             else:
                 f.write("[]\n")
-    log.info("AlleleAnnotations saved: %s", path)
+    log.info("AlleleAnnotations.txt saved: %s", path)
 
 
 def _write_results_txt(

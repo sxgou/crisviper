@@ -20,7 +20,7 @@ log = get_logger(__name__)
 
 
 def _read_fastq_counts(fastq_path: str) -> Dict[str, int]:
-    """读取FASTQ文件，返回 {序列: 出现次数} 字典"""
+    """Read a FASTQ file and return a {sequence: occurrence_count} dictionary."""
     counts = {}
     if fastq_path.endswith('.gz'):
         with gzip.open(fastq_path, 'rt') as f:
@@ -36,40 +36,45 @@ def _read_fastq_counts(fastq_path: str) -> Dict[str, int]:
 
 def fastq_to_dataframe(fastq_path: str, sample_name: str = "sample") -> List[Dict]:
     """
-    将FASTQ文件转换为字典列表，每个字典代表一条唯一序列
+    Convert a FASTQ file to a list of deduplicated sequence dicts.
 
-    参数:
-        fastq_path: FASTQ文件路径（支持.gz）
-        sample_name: 样本名称
+    Each unique sequence is represented as a single entry with its
+    readCount set to the number of times it appeared in the FASTQ.
 
-    返回:
-        字典列表，每个字典包含readName, cellBC, UMI, readCount, seq字段
+    Args:
+        fastq_path: Path to FASTQ file (supports .gz compression).
+        sample_name: Sample name for read labeling.
+
+    Returns:
+        List of dicts with keys: readName, cellBC, UMI, readCount, seq.
     """
     counts = _read_fastq_counts(fastq_path)
 
-    # 构建字典列表
+    # Build list of dicts
     rows = []
     for i, (seq, count) in enumerate(counts.items()):
         rows.append({
             "readName": f"{sample_name}_seq{i+1}",
-            "cellBC": sample_name,          # 虚拟细胞条形码
-            "UMI": f"UMI{i+1}",             # 虚拟UMI
-            "readCount": count,             # 该序列的观测次数
+            "cellBC": sample_name,          # Virtual cell barcode (sample-level)
+            "UMI": f"UMI{i+1}",             # Virtual UMI (sequence-level)
+            "readCount": count,             # Observation count for this sequence
             "seq": seq
         })
 
-    log.info("从 %s 中读取了 %d 条唯一序列（总计 %d 条reads）。", fastq_path, len(rows), sum(counts.values()))
+    log.info("Read %d unique sequences (%d total reads) from %s", len(rows), sum(counts.values()), fastq_path)
     return rows
 
 
 def fastq_to_fasta(fastq_path: str, output_fasta: str, sample_name: str = "sample") -> None:
     """
-    将FASTQ文件转换为FASTA格式，头部包含元数据
+    Convert a FASTQ file to FASTA format with metadata in headers.
 
-    参数:
-        fastq_path: 输入FASTQ文件（支持.gz）
-        output_fasta: 输出FASTA文件路径
-        sample_name: 样本名称
+    Each FASTA header includes: readName, cellBC, UMI, readCount.
+
+    Args:
+        fastq_path: Input FASTQ file path (supports .gz).
+        output_fasta: Output FASTA file path.
+        sample_name: Sample name for read labeling.
     """
     counts = _read_fastq_counts(fastq_path)
 
@@ -79,29 +84,29 @@ def fastq_to_fasta(fastq_path: str, output_fasta: str, sample_name: str = "sampl
             f.write(f">{read_name} cellBC={sample_name} UMI=UMI{i+1} readCount={count}\n{seq}\n")
 
     total_reads = sum(counts.values())
-    log.info("已将 %d 条唯一序列（%d 条reads）写入 %s", len(counts), total_reads, output_fasta)
+    log.info("Wrote %d unique sequences (%d reads) to %s", len(counts), total_reads, output_fasta)
 
 
 def fastq_to_fasta_from_rows(rows: List[Dict], output_path: str) -> None:
-    """将字典列表（merge_paired_end/fastq_to_dataframe 输出格式）写入FASTA。
+    """Write a list of row dicts (from merge_paired_end/fastq_to_dataframe) to FASTA format.
 
-    参数:
-        rows: 字典列表，包含 readName, cellBC, UMI, readCount, seq
-        output_path: 输出FASTA文件路径
+    Args:
+        rows: List of dicts with keys: readName, cellBC, UMI, readCount, seq.
+        output_path: Output FASTA file path.
     """
     with open(output_path, 'w') as f:
         for row in rows:
             f.write(f">{row['readName']} cellBC={row['cellBC']} "
                     f"UMI={row['UMI']} readCount={row['readCount']}\n"
                     f"{row['seq']}\n")
-    log.info("数据已保存至 %s", output_path)
+    log.info("Data saved to %s", output_path)
 
 
 def _check_fastp() -> None:
-    """检查fastp是否可用，否则退出。"""
+    """Check that fastp is installed, exit with error if not."""
     if shutil.which("fastp") is None:
-        log.error("fastp 未安装。双端合并需要 fastp，请执行: "
-                  "brew install fastp  # macOS 或 "
+        log.error("fastp is not installed. Paired-end merging requires fastp. "
+                  "Install with: brew install fastp  # macOS, or "
                   "conda install -c bioconda fastp  # conda")
         sys.exit(1)
 
@@ -115,19 +120,19 @@ def merge_paired_end(
     require_qual: int = 15,
     sample_name: str = "sample",
 ) -> List[Dict]:
-    """调用 fastp 合并双端测序 reads，返回去重后的字典列表。
+    """Merge paired-end reads using fastp and return deduplicated row dicts.
 
-    参数:
-        fastq1: R1 FASTQ 文件路径
-        fastq2: R2 FASTQ 文件路径
-        min_overlap: 最小 overlap 长度（fastp: overlap_len_require）
-        max_mismatch_rate: Overlap 错配比例上限 %（fastp: overlap_diff_percent_limit）
-        max_mismatch_diff: Overlap 最大错配绝对数（fastp: overlap_diff_limit）
-        require_qual: 碱基质量阈值（fastp: -q）
-        sample_name: 样本名称
+    Args:
+        fastq1: R1 FASTQ file path.
+        fastq2: R2 FASTQ file path.
+        min_overlap: Minimum overlap length (fastp: overlap_len_require).
+        max_mismatch_rate: Max mismatch rate %% in overlap (fastp: overlap_diff_percent_limit).
+        max_mismatch_diff: Max absolute mismatches in overlap (fastp: overlap_diff_limit).
+        require_qual: Minimum base quality threshold (fastp: -q).
+        sample_name: Sample name for read labeling.
 
-    返回:
-        字典列表（与 fastq_to_dataframe 格式一致）
+    Returns:
+        List of dicts (same format as fastq_to_dataframe).
     """
     _check_fastp()
 
@@ -152,7 +157,7 @@ def merge_paired_end(
             "-h", "/dev/null",
         ]
 
-        log.info("运行 fastp 合并双端 reads...")
+        log.info("Running fastp to merge paired-end reads...")
         log.debug("  cmd: %s", " ".join(cmd))
 
         try:
@@ -161,16 +166,16 @@ def merge_paired_end(
                 for line in result.stdout.splitlines():
                     log.debug("  fastp: %s", line)
         except subprocess.CalledProcessError as e:
-            log.error("fastp 运行失败 (exit %d)", e.returncode)
+            log.error("fastp failed (exit %d)", e.returncode)
             if e.stderr:
                 for line in e.stderr.splitlines():
                     log.error("  %s", line)
             sys.exit(1)
 
-        # 读取合并结果
+        # Read merged results
         counts = {}
         if not os.path.exists(merged_out) or os.path.getsize(merged_out) == 0:
-            log.warning("fastp 未产生任何合并 reads！")
+            log.warning("fastp produced no merged reads!")
             return []
 
         with open(merged_out) as f:
@@ -179,7 +184,7 @@ def merge_paired_end(
                 counts[seq] = counts.get(seq, 0) + 1
 
         if not counts:
-            log.warning("fastp 未产生任何合并 reads！")
+            log.warning("fastp produced no merged reads!")
             return []
 
         rows = []
@@ -192,38 +197,38 @@ def merge_paired_end(
                 "seq": seq,
             })
 
-        log.info("fastp 合并完成: %d 条唯一序列（总计 %d 条reads）",
+        log.info("fastp merge complete: %d unique sequences (%d total reads)",
                  len(rows), sum(counts.values()))
         return rows
 
 
 def save_tsv(rows: List[Dict], output_path: str) -> None:
-    """将字典列表保存为TSV文件"""
+    """Save a list of row dicts to a TSV file."""
     fieldnames = ["readName", "cellBC", "UMI", "readCount", "seq"]
     with open(output_path, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter='\t')
         writer.writeheader()
         writer.writerows(rows)
-    log.info("数据已保存至 %s", output_path)
+    log.info("Data saved to %s", output_path)
 
 
 def read_reference_fasta(fasta_path: str) -> str:
-    """读取reference FASTA文件，返回序列字符串"""
+    """Read a reference sequence from a FASTA file and return the upper-case sequence string."""
     try:
         for record in SeqIO.parse(fasta_path, "fasta"):
             return str(record.seq).upper()
     except Exception as e:
-        log.error("读取reference文件失败 - %s", e)
+        log.error("Failed to read reference file - %s", e)
         sys.exit(1)
-    log.error("reference文件为空: %s", fasta_path)
+    log.error("Reference file is empty: %s", fasta_path)
     sys.exit(1)
 
 
 def read_queries_tsv(tsv_path: str) -> List[Dict]:
     """
-    读取查询序列TSV文件
+    Read query sequences from a TSV file.
 
-    期望格式: readName, cellBC, UMI, readCount, seq
+    Expected format: readName, cellBC, UMI, readCount, seq
     """
     rows = []
     try:
@@ -231,28 +236,29 @@ def read_queries_tsv(tsv_path: str) -> List[Dict]:
             reader = csv.DictReader(f, delimiter='\t')
             for line_num, row in enumerate(reader, start=2):
                 if 'seq' not in row or not row['seq'].strip():
-                    log.warning("第%d行缺少序列字段，跳过", line_num)
+                    log.warning("Line %d missing sequence field, skipping", line_num)
                     continue
                 row['seq'] = row['seq'].upper()
                 row['readCount'] = int(row.get('readCount', 1))
                 rows.append(row)
     except Exception as e:
-        log.error("读取TSV文件失败 - %s", e)
+        log.error("Failed to read TSV file - %s", e)
         sys.exit(1)
 
     if not rows:
-        log.error("TSV文件为空或不包含有效序列: %s", tsv_path)
+        log.error("TSV file is empty or contains no valid sequences: %s", tsv_path)
         sys.exit(1)
 
-    log.info("从 %s 中读取了 %d 条查询序列。", tsv_path, len(rows))
+    log.info("Read %d query sequences from %s", len(rows), tsv_path)
     return rows
 
 
 def read_queries_fasta(fasta_path: str) -> List[Dict]:
     """
-    读取FASTA格式查询序列
+    Read query sequences from a FASTA file.
 
-    头部可包含元数据: >readName cellBC=sample1 UMI=UMI1 readCount=2
+    FASTA headers can contain metadata:
+    >readName cellBC=sample1 UMI=UMI1 readCount=2
     """
     rows = []
     try:
@@ -285,19 +291,19 @@ def read_queries_fasta(fasta_path: str) -> List[Dict]:
                 "seq": seq
             })
     except Exception as e:
-        log.error("读取FASTA文件失败 - %s", e)
+        log.error("Failed to read FASTA file - %s", e)
         sys.exit(1)
 
     if not rows:
-        log.error("FASTA文件为空或格式不正确: %s", fasta_path)
+        log.error("FASTA file is empty or invalid: %s", fasta_path)
         sys.exit(1)
 
-    log.info("从 %s 中读取了 %d 条查询序列。", fasta_path, len(rows))
+    log.info("Read %d query sequences from %s", len(rows), fasta_path)
     return rows
 
 
 # ═══════════════════════════════════════════════════════════════
-# 单细胞 FASTQ 解析 (10x / InDrops / BGI)
+# Single-cell FASTQ parsing (10x / InDrops / BGI)
 # ═══════════════════════════════════════════════════════════════
 
 def parse_10x_provenance(
@@ -360,7 +366,11 @@ def parse_10x_fastq(
 
     N = len(r1_records)
     raw_cb = [str(r.seq) for r in r1_records]
-    raw_qc = [str(r.letter_annotations["phred_quality"]) for r in r1_records]
+    # Convert Phred quality scores (list of ints) to proper ASCII quality strings
+    # r.letter_annotations["phred_quality"] returns e.g. [40, 30, 20, ...]
+    # We encode as ASCII: chr(score + 33) per the Sanger FASTQ standard
+    raw_qc = ["".join(chr(q + 33) for q in r.letter_annotations["phred_quality"])
+              for r in r1_records]
     raw_seq = [str(r.seq) for r in r2_records]
 
     # Parse CB and UMI from R1
@@ -488,6 +498,7 @@ def parse_indrops_provenance(
         parts = h.split()
         cb = ""
         umi = ""
+        qc = ""
         for p in parts:
             if p.startswith("CB:"):
                 cb = p.split(":")[-1]
@@ -496,9 +507,10 @@ def parse_indrops_provenance(
             elif p.startswith("CR:"):
                 cb = p.split(":")[-1]
             elif p.startswith("CY:"):
-                qcs.append(p.split(":")[-1])
+                qc = p.split(":")[-1]
         cbs.append(cb)
         umis.append(umi)
+        qcs.append(qc)
     return cbs, umis, qcs
 
 

@@ -28,12 +28,12 @@ def _ensure_mpl():
         _HAS_MPL = True
         return True
     except ImportError:
-        log.warning("未安装matplotlib，图表功能将不可用。请安装: pip install matplotlib")
+        log.warning("matplotlib not installed — charting disabled. Install with: pip install matplotlib")
         return False
 
 
 def _img_to_b64(fig) -> str:
-    """将matplotlib图形转换为base64 HTML可嵌入字符串"""
+    """Convert a matplotlib figure to a base64-encoded PNG string for HTML embedding."""
     if fig is None:
         return ""
     buf = io.BytesIO()
@@ -46,7 +46,7 @@ def _img_to_b64(fig) -> str:
 
 
 def _gen_indel_length_chart(report_data: dict) -> str:
-    """蝴蝶图：Insertion向上，Deletion向下的diverging bar chart (Reads加权, 百分比Y轴)"""
+    """Butterfly chart: insertion lengths upward, deletion lengths downward (read-weighted, percentage Y-axis)."""
     ms = report_data.get("mutation_stats", {})
     ins_counts = ms.get("all_insertion_lengths_reads", {})
     del_counts = ms.get("all_deletion_lengths_reads", {})
@@ -70,12 +70,12 @@ def _gen_indel_length_chart(report_data: dict) -> str:
 
     total_ins = sum(ins_counts.values())
     total_del = sum(del_counts.values())
-    # 转为百分比
+    # Convert to percentages
     ins_pct = [v / total_ins * 100 if total_ins else 0 for v in ins_raw_vals]
     del_pct = [-v / total_del * 100 if total_del else 0 for v in del_raw_vals]
 
     max_pct = max(max(ins_pct) if ins_pct else 0, max(abs(x) for x in del_pct) if del_pct else 0)
-    y_lim = max(10, ((max_pct // 10) + 1) * 10)  # 以10为单位向上取整
+    y_lim = max(10, ((max_pct // 10) + 1) * 10)  # Round up to nearest 10%
 
     fig, ax = plt.subplots(figsize=(8, 3.5))
     ax.bar(all_lengths, ins_pct, color='#20c997', width=0.8,
@@ -102,20 +102,22 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
                          primer5_len: int = 23,
                          primer3_len: int = 33) -> str:
     """
-    Allele热图：每行一个allele，每列一个碱基位置。
+    Allele heatmap: one row per allele, one column per base position.
 
-    展示top_n个最频繁allele的碱基级比对，支持自定义显示区域。
-    window_start/window_end = None 时显示全长参考序列。
+    Displays the top N most frequent alleles as a base-level alignment grid,
+    with color-coded bases, deletion/insertion markers, and cutsite annotations.
+    Supports a configurable display window over the reference region.
 
-    参数:
-        results: 比对结果列表
-        ref_seq: 参考序列
-        cutsites: 用于标注cutsite区域
-        top_n: 展示的top allele数
-        window_start: 显示起始位置（0-indexed，默认0）
-        window_end: 显示结束位置（含，默认ref_seq全长）
+    Args:
+        results: List of alignment result dicts.
+        ref_seq: Full reference sequence.
+        cutsites: Cutsite regions for annotations on the heatmap.
+        top_n: Number of top alleles to display.
+        window_start: Start position for display window (0-indexed, default 0).
+        window_end: End position for display window (inclusive, default full length).
 
-    返回: base64 PNG
+    Returns:
+        Base64-encoded PNG image string, or empty string on failure.
     """
     if not results or not ref_seq:
         return ""
@@ -129,7 +131,8 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
     if window_len <= 0:
         return ""
 
-    # 1. 聚合allele（按内部区域去重，消除引物差异导致的假分裂）
+    # 1. Aggregate alleles (deduplicate by internal region to avoid
+    #    primer-variation-induced allele fragmentation)
     allele_counts = {}
     allele_data = {}
     for r in results:
@@ -141,7 +144,7 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
             continue
         rc = r.get("readCount", 1)
 
-        # 提取内部区域（去掉引物区）
+        # Extract internal region (trim primers)
         pos_map, total_ref = _build_ref_pos_map_full(ar)
         internal_start = next((i for i, p in enumerate(pos_map) if p == primer5_len), primer5_len)
         internal_end = next((i for i, p in enumerate(pos_map) if p == total_ref - primer3_len),
@@ -151,7 +154,7 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
 
         allele_counts[internal_key] = allele_counts.get(internal_key, 0) + rc
         if internal_key not in allele_data:
-            # 保存第一份完整对齐序列用于展示
+            # Save first full alignment data for display
             allele_data[internal_key] = {
                 "aligned_ref": ar,
                 "aligned_query": aq,
@@ -162,24 +165,28 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
     if not allele_counts:
         return ""
 
-    # 2. 排序取top_n
+    # 2. Sort and take top N
     sorted_alleles = sorted(allele_counts.items(), key=lambda x: -x[1])
     top_alleles = sorted_alleles[:top_n]
     total_reads = sum(allele_counts.values())
 
-    # 3. Insertion感知的显示列构建
+    # 3. Insertion-aware display column construction
     window_ref_bases = ref_seq[window_start:window_end + 1]
-    n_cols = window_len  # 参考序列列数
+    n_cols = window_len  # Number of reference columns in display window
 
     def _build_display_with_insertions(aligned_ref, aligned_query):
-        """构建包含insertion的显示列（ref不开gap，query顺移展示插入碱基）。
+        """Build display columns that accommodate insertions.
 
-        遍历比对列，参考碱基占一列，插入碱基（ref为gap但query有碱基时）
-        额外占一列，后续碱基顺移。返回：
-            seq:      每列对应的query碱基列表（长度 >= window_len）
-            ref:      每列对应的ref碱基（''表示insertion列）
-            ins_blocks: [(start, end), ...] 插入块的列范围
-            width:    总显示列数
+        Reference bases each occupy one column. Insertion columns (reference
+        gap, query base) create extra columns beyond the reference width.
+        Subsequent bases shift right to make room.
+
+        Returns:
+            Tuple of (seq, ref, ins_blocks, width):
+            - seq: query base per column (length >= window_len)
+            - ref: reference base per column (empty string for insertion columns)
+            - ins_blocks: list of [(start_col, end_col)] for insertion blocks
+            - width: total number of display columns
         """
         seq = []
         ref = []
@@ -189,7 +196,7 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
         in_ins = False
         ins_start = 0
         for rb, qb in zip(aligned_ref, aligned_query):
-            if rb != '-':   # ref有碱基 → 正常列
+            if rb != '-':   # Reference has base → normal column
                 if in_ins:
                     ins_blocks.append((ins_start, col - 1))
                     in_ins = False
@@ -200,7 +207,7 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
                 ref_pos += 1
                 if ref_pos > window_end:
                     break
-            elif qb != '-':  # ref为gap、query有碱基 → insertion列
+            elif qb != '-':  # Ref gap, query base → insertion column
                 if window_start <= ref_pos <= window_end:
                     if not in_ins:
                         ins_start = col
@@ -210,7 +217,7 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
                     col += 1
         if in_ins:
             ins_blocks.append((ins_start, col - 1))
-        # 填充至至少window_len个ref列
+        # Pad to at least window_len reference-mapped columns
         ref_cnt = sum(1 for r in ref if r != '')
         while ref_cnt < window_len:
             seq.append('-')
@@ -219,7 +226,7 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
             ref_cnt += 1
         return seq, ref, ins_blocks, col
 
-    # 预计算所有allele行的显示列，截断至n_cols
+    # Pre-compute display columns for all allele rows, truncate to n_cols
     row_data = []  # [(seq, ref, ins_blocks, readCount), ...]
     for internal_key, total_rc in top_alleles:
         ad = allele_data.get(internal_key, {})
@@ -232,9 +239,9 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
             rf = list(window_ref_bases)
             blk = []
             w = len(sq)
-        # 截断至n_cols，超出reference长度的部分丢弃
+        # Clip to n_cols, discarding columns beyond reference width
         if len(sq) > n_cols:
-            # 修正insertion块坐标：丢弃超出n_cols的部分
+            # Fix insertion block coordinates: discard blocks past n_cols
             clipped_blk = []
             for start, end in blk:
                 if start >= n_cols:
@@ -243,15 +250,15 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
             sq = sq[:n_cols]
             rf = rf[:n_cols]
             blk = clipped_blk
-        # 填充至n_cols（短于参考序列的补gap）
+        # Pad to n_cols (alleles shorter than reference get gaps)
         while len(sq) < n_cols:
             sq.append('-')
             rf.append('')
         row_data.append((sq, rf, blk, total_rc))
 
-    grid_cols = n_cols  # 固定为参考序列列数
+    grid_cols = n_cols  # Fixed to reference column count
 
-    # 4. 碱基配色
+    # 4. Base color map
     base_colors = {
         'A': '#cbe9cb', 'C': '#fee5ce', 'G': '#ffffd6',
         'T': '#e5deed', 'U': '#e5deed', 'N': '#e9e9e9',
@@ -262,7 +269,7 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
 
     n_rows = len(top_alleles)
 
-    # 5. 自适应单元格尺寸（基于原始参考列数）
+    # 5. Adaptive cell sizing based on reference column count
     if n_cols > 200:
         cell_size = 10
         font_size = 5.5
@@ -276,7 +283,7 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
         cell_size = 22
         font_size = 9
 
-    label_w = 180  # 右侧标注宽度(px)
+    label_w = 180  # Right-side annotation width (px)
     fig_w_px = grid_cols * cell_size + label_w
     fig_h_px = (n_rows + 5.0) * cell_size
 
@@ -290,7 +297,7 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
     ax.set_aspect('equal')
     ax.axis('off')
 
-    # 6. 参考序列行（grid_cols列，超出n_cols部分留白）
+    # 6. Reference sequence row (grid_cols columns, blank beyond n_cols)
     ref_y = n_rows + 1.5
     for ci in range(grid_cols):
         if ci < n_cols:
@@ -304,7 +311,7 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
             ax.add_patch(plt.Rectangle((ci, ref_y - 0.5), 1, 1,
                                         facecolor='white', edgecolor='white', linewidth=0))
 
-    # 标注cutsite区域（灰色半透明方框，基于参考坐标n_cols）
+    # Annotate cutsite regions (semi-transparent grey boxes based on ref coords n_cols)
     if cutsites:
         for cs in cutsites:
             if cs.start > window_end or cs.end < window_start:
@@ -317,7 +324,7 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
                     facecolor='#888888', alpha=0.3, edgecolor=None, zorder=0
                 ))
 
-    # 8. sgRNA区域示意（半高灰色方块，紧贴reference下方）
+    # 8. sgRNA region indicators (half-height grey bars just below reference row)
     if cutsites:
         ref_pos_to_col = {rp: rp - window_start for rp in range(window_start, window_end + 1)}
         grna_y = ref_y - 0.75
@@ -340,12 +347,12 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
                     ha='right', va='center', fontsize=max(6, font_size - 0.5),
                     color='#666', fontweight='bold')
 
-    # 7. Allele行（使用扩展显示列，insertion用红色框标出）
+    # 7. Allele rows (using extended display columns, insertions bounded in red)
     ins_box_color = '#e94560'
     for ai, (sq, rf, blk, total_rc) in enumerate(row_data):
         y = n_rows - 1 - ai
 
-        # 隔行背景色
+        # Alternating row background
         if ai % 2 == 1:
             ax.add_patch(plt.Rectangle((0, y - 0.5), grid_cols, 1,
                                         facecolor='#f8f8f8', edgecolor=None, zorder=0))
@@ -377,19 +384,19 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
                 ax.text(ci + 0.5, y, base, ha='center', va='center',
                         fontsize=font_size, fontweight=wgt)
 
-        # 红色框标记整体insertion块
+        # Red box marking insertion blocks
         for start, end in blk:
             ax.add_patch(plt.Rectangle(
                 (start, y - 0.5), end - start + 1, 1,
                 facecolor='none', edgecolor=ins_box_color, linewidth=1.5, zorder=5
             ))
 
-        # 右侧label
+        # Right-side label with percentage and read count
         pct = total_rc / total_reads * 100
         ax.text(grid_cols + 0.3, y, f"{pct:.1f}% ({total_rc})",
                 ha='left', va='center', fontsize=max(8, font_size + 1))
 
-    # 图例
+    # Legend
     lgy = -1.2
     items = [('A', '#cbe9cb'), ('C', '#fee5ce'), ('G', '#ffffd6'),
              ('T', '#e5deed'), ('-', '#f0f0f0'), ('ins', '#ffcccc')]
@@ -416,17 +423,21 @@ def generate_charts(results: List[Dict], report_data: dict = None,
                      primer5_len: int = 23,
                      primer3_len: int = 33) -> Dict[str, str]:
     """
-    生成所有图表，返回 {图表名: base64图片} 字典。
+    Generate all chart images and return as a {chart_name: base64} dictionary.
 
-    参数:
-        results: 比对结果列表
-        report_data: 报告数据字典
-        ref_length: 参考序列长度
-        ref_seq: 参考序列字符串（用于allele热图）
-        cutsites: CutsiteRegion列表（用于allele热图标注）
-        allele_window_start: Allele热图显示起始位置（默认0）
-        allele_window_end: Allele热图显示结束位置（含，默认全长）
-        allele_top_n: Allele热图展示的top allele数（默认50）
+    Currently produces two charts:
+      - indel_length: butterfly chart of insertion/deletion length distribution
+      - allele_heatmap: base-level heatmap of top N alleles
+
+    Args:
+        results: List of alignment result dicts.
+        report_data: Report data dict containing mutation_stats.
+        ref_length: Reference sequence length.
+        ref_seq: Reference sequence string (required for allele heatmap).
+        cutsites: CutsiteRegion list for heatmap annotations.
+        allele_window_start: Start position for heatmap window (default 0).
+        allele_window_end: End position for heatmap window (inclusive).
+        allele_top_n: Number of top alleles to show in heatmap (default 50).
     """
     charts = {}
     if not _ensure_mpl():
@@ -443,5 +454,5 @@ def generate_charts(results: List[Dict], report_data: dict = None,
                 primer5_len=primer5_len, primer3_len=primer3_len,
             )
     except Exception as e:
-        log.warning("图表生成失败 - %s", e)
+        log.warning("Chart generation failed - %s", e)
     return charts

@@ -1,19 +1,24 @@
 """
-crisviper — CrisViper 库
-=====================
-核心比对算法、谱系示踪管线、后处理矫正和 I/O 函数。
+crisviper — Lineage tracing analysis toolkit
+=============================================
+Core functionality for CRISPR-Cas9 lineage tracer amplicon analysis.
 
-模块划分（按管道流程）：
-  - io:           数据转换（FASTQ→TSV/FASTA）
-  - alignment:    核心比对算法
-  - lineage:      谱系示踪比对模式
-  - mutation:     突变识别
-  - pipeline:     管道编排
-  - reporting:    输出和报告生成
-  - plotting:     可视化图表
-  - config:       数据结构定义
-  - models:       类型安全的数据模型
-  - logging_config: 日志框架
+Module overview (in pipeline order):
+  - io:           Data conversion (FASTQ → TSV/FASTA), single-cell 10x/InDrops parsing
+  - alignment:    Core sequence alignment algorithms (Gotoh, position-aware DP)
+  - lineage:      Lineage-tracer alignment mode with structure-aware penalties
+  - mutation:     Mutation event extraction and classification from alignments
+  - pipeline:     Full analysis pipeline orchestration and per-sequence workflow
+  - reporting:    Output serialization JSON/TSV, summary reports, HTML/JSON report generation
+  - plotting:     Visualization charts (allele heatmaps, indel distributions)
+  - config:       Data structures for amplicon configuration and YAML loading
+  - models:       Type-safe data models used across all pipeline stages
+  - summary:      Summary statistics tables (allele frequency, per-target editing, filtering reasons)
+  - denoiser:     UMI/CB denoising via directional adjacency clustering
+  - caller:       Allele calling (coarse-grain and exact consensus)
+  - threshold:    Statistical read-count threshold computation for UMI/CB filtering
+  - metrics:      Diversity and heterogeneity metrics (Shannon entropy, effective alleles)
+  - logging_config: Logging configuration framework
 """
 from crisviper.config import CutsiteRegion, AmpliconConfig
 from crisviper.models import (

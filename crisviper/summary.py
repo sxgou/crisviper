@@ -1,10 +1,13 @@
-"""crisviper/summary.py — 总结性统计表格生成模块
+"""crisviper/summary.py — Summary statistics table generation module.
 
-产生 4 个 TSV 表格，保存到输出目录：
-  - allele_frequency.tsv    按突变指纹聚合的 Allele 频率表
-  - per_target_editing.tsv  每个 Target 的编辑类型统计
-  - filter_reason.tsv       序列丢弃原因统计
-  - indel_length.tsv        Indel 长度分布（按实际长度分组）
+Produces 4 TSV summary tables saved to the output directory:
+  - allele_frequency.tsv    Allele frequency table aggregated by mutation fingerprint
+  - per_target_editing.tsv  Editing statistics per target site
+  - filter_reason.tsv       Sequence discard reason breakdown
+  - indel_length.tsv        Indel length distribution (grouped by actual length)
+  - deletion_length.tsv     Deletion length distribution
+  - insertion_length.tsv    Insertion length distribution
+  - event_level_details.tsv Per-event statistics table
 """
 
 import csv
@@ -19,22 +22,30 @@ log = get_logger(__name__)
 
 def save_summary_tables(results: List[Dict], output_dir: str,
                          ref_seq: str = "", cutsites: Optional[list] = None) -> None:
-    """生成4个总结性 TSV 表格到 output_dir。
+    """Generate 4 summary TSV tables in the output directory.
 
-    参数:
-        results: 比对结果列表（AlignmentResult.to_dict() 格式）
-        output_dir: 输出目录（自动创建）
-        ref_seq: 参考序列（用于 cutsite 检测）
-        cutsites: CutsiteRegion 列表（可选，缺失时 per_target 表为空）
+    Tables produced:
+      1. allele_frequency.tsv  — Alleles sorted by frequency with read counts/percentages
+      2. per_target_editing.tsv — Per-target mutation rates and type breakdowns
+      3. filter_reason.tsv     — Sequence discard reason counts
+      4a. deletion_length.tsv  — Deletion length distribution
+      4b. insertion_length.tsv — Insertion length distribution
+      5. event_level_details.tsv — Detailed per-event breakdown
+
+    Args:
+        results: List of alignment result dicts (from AlignmentResult.to_dict()).
+        output_dir: Output directory (created automatically).
+        ref_seq: Reference sequence (used for cutsite detection).
+        cutsites: CutsiteRegion list (optional; per_target table is empty when absent).
     """
     os.makedirs(output_dir, exist_ok=True)
     successful = [r for r in results if "error" not in r]
     failed = [r for r in results if "error" in r]
     total_reads_success = sum(r.get("readCount", 1) for r in successful)
 
-    # ── 辅助: 生成 Allele 标签 ──
+    # ── Helper: Parse INDEL events into separate del/ins descriptions ──
     def _split_indel(m: Dict) -> List[str]:
-        """将 INDEL 事件解析为独立的 del/ins 描述列表。"""
+        """Parse an INDEL mutation into a list of independent del/ins descriptions."""
         ref_base = m.get("ref_base", "")
         query_base = m.get("query_base", "")
         ref_pos = m.get("ref_pos", 0)
@@ -67,6 +78,7 @@ def save_summary_tables(results: List[Dict], output_dir: str,
         return parts if parts else [f"indel:{ref_pos}-{m.get('length', 1)}bp"]
 
     def _allele_label(mutations: List[Dict]) -> str:
+        """Generate a compact allele label from a list of mutation dicts."""
         if not mutations:
             return "wt"
         parts = []
@@ -86,6 +98,7 @@ def save_summary_tables(results: List[Dict], output_dir: str,
         return ";".join(parts) if parts else "wt"
 
     def _mutation_type_label(mutations: List[Dict]) -> str:
+        """Classify a list of mutations into a type category label."""
         has_del = any(m.get("type") == "deletion" for m in mutations)
         has_ins = any(m.get("type") == "insertion" for m in mutations)
         has_indel = any(m.get("type") == "indel" for m in mutations)
@@ -129,16 +142,16 @@ def save_summary_tables(results: List[Dict], output_dir: str,
                 "Sequences": a["sequences"], "Reads": a["reads"],
                 "Reads_Pct": f"{pct:.2f}",
             })
-    log.info("Allele频率表已保存至 %s", path_af)
+    log.info("Allele frequency table saved to %s", path_af)
 
     # ═══════════════════════════════════════════════════════════════
     # 2. per_target_editing.tsv
     # ═══════════════════════════════════════════════════════════════
     def _mutation_overlaps_target(m: Dict, target_start: int, target_end: int) -> bool:
-        """判断突变是否与Target重叠（全长参考坐标）
+        """Check whether a mutation overlaps a target region on the full-length reference.
 
-        deletion/indel 使用跨度重叠检查（[pos, pos+len-1] 与 [ts, te] 相交）
-        substitution/insertion 使用点位置检查（pos in [ts, te]）
+        Deletion/indel types use span overlap ([pos, pos+len-1] vs [ts, te]).
+        Substitution/insertion types use point-in-region check.
         """
         mp = m.get("ref_pos", -1)
         if mp < 0:
@@ -151,12 +164,10 @@ def save_summary_tables(results: List[Dict], output_dir: str,
             return target_start <= mp <= target_end
 
     def _is_intrasite(m: Dict, intervals: list) -> bool:
-        """判断del/indel突变是否完全处于某个target 27bp区域内。
+        """Determine if a del/indel mutation is entirely within a single 27bp target region.
 
-        对整个参考坐标上的跨度进行检查:
-          - 完全在一个 target 内 → intrasite
-          - 跨越两个及以上 target → intersite
-        对 ins/sub 直接返回 True（单碱基事件，只在一个 target 内）
+        A mutation that spans two or more targets is classified as inter-site.
+        Insertions and substitutions are always intra-site (single-base events).
         """
         mt = m.get("type", "")
         if mt in ("insertion", "substitution"):
@@ -255,7 +266,7 @@ def save_summary_tables(results: List[Dict], output_dir: str,
                             "Del_intra": "", "Del_inter": "",
                             "Ins": "", "Indel_intra": "", "Indel_inter": "",
                             "Sub": "", "Avg_Mut_Length": "", "Wt": ""})
-    log.info("Per-target编辑表已保存至 %s", path_pt)
+    log.info("Per-target editing table saved to %s", path_pt)
 
     # ═══════════════════════════════════════════════════════════════
     # 3. filter_reason.tsv
@@ -280,7 +291,7 @@ def save_summary_tables(results: List[Dict], output_dir: str,
                              "Reads": item["reads"]})
         if not sorted_reasons:
             writer.writerow({"Reason": "none", "Sequences": 0, "Reads": 0})
-    log.info("过滤原因统计表已保存至 %s", path_fr)
+    log.info("Filter reason table saved to %s", path_fr)
 
     # ═══════════════════════════════════════════════════════════════
     # 4a. deletion_length.tsv
@@ -315,7 +326,7 @@ def save_summary_tables(results: List[Dict], output_dir: str,
             })
         if not del_len_counter:
             writer.writerow({"Length_bp": "", "Events": 0, "Reads": 0, "Reads_Pct": ""})
-    log.info("Deletion长度分布表已保存至 %s", path_dl)
+    log.info("Deletion length distribution table saved to %s", path_dl)
 
     # ═══════════════════════════════════════════════════════════════
     # 4b. insertion_length.tsv
@@ -333,7 +344,7 @@ def save_summary_tables(results: List[Dict], output_dir: str,
             })
         if not ins_len_counter:
             writer.writerow({"Length_bp": "", "Events": 0, "Reads": 0, "Reads_Pct": ""})
-    log.info("Insertion长度分布表已保存至 %s", path_il)
+    log.info("Insertion length distribution table saved to %s", path_il)
 
     # ═══════════════════════════════════════════════════════════════
     # 5. event_level_details.tsv
@@ -343,10 +354,16 @@ def save_summary_tables(results: List[Dict], output_dir: str,
 
 def _save_event_level_table(successful: List[Dict], output_dir: str,
                             cutsites: Optional[list] = None) -> None:
-    """事件级统计表：每个突变事件一行，记录位置、覆盖target、reads数。
+    """Write event-level statistics: one row per unique mutation event.
 
-    一个 mutation event 由 (type, start_pos, length) 唯一标识。
-    对于横跨多个 target 的事件，记录起止 target 名称和跨越数量。
+    Each mutation event is uniquely identified by (type, start_pos, length).
+    For events spanning multiple targets, records the start/end target names
+    and the number of targets crossed.
+
+    Args:
+        successful: List of successful alignment result dicts.
+        output_dir: Output directory path.
+        cutsites: CutsiteRegion list for target interval computation.
     """
     from collections import defaultdict
 
@@ -357,8 +374,7 @@ def _save_event_level_table(successful: List[Dict], output_dir: str,
             if cs.name.startswith("Target"):
                 target_intervals.append((cs.name, cs.start - 13, cs.end + 7))
 
-    # Aggregate events by signature
-    # key: (type, start_pos, length)
+    # Aggregate events by signature: (type, start_pos, length)
     event_groups = defaultdict(lambda: {"sequences": 0, "reads": 0,
                                         "affected": set(), "min_target": None, "max_target": None})
 
@@ -399,7 +415,7 @@ def _save_event_level_table(successful: List[Dict], output_dir: str,
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter='\t')
         writer.writeheader()
 
-        # Sort: by reads desc, then position
+        # Sort by reads descending, then position ascending
         sorted_events = sorted(event_groups.items(),
                                key=lambda x: (-x[1]["reads"], x[0][1]))
         for key, eg in sorted_events:
@@ -419,4 +435,4 @@ def _save_event_level_table(successful: List[Dict], output_dir: str,
                 "Sequences": eg["sequences"], "Reads": eg["reads"],
             })
 
-    log.info("事件级统计表已保存至 %s", path_ev)
+    log.info("Event-level detail table saved to %s", path_ev)

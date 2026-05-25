@@ -96,17 +96,23 @@ def build_homology_penalty_profile(
     homology_window: int = 8,
     homology_penalty: float = 0.0,
 ) -> np.ndarray:
-    """构建同源区域惩罚profile — 对参考序列中存在多拷贝的区域施加match_score打折。
+    """Build homology-region penalty profile to suppress matches in repetitive regions.
 
-    homology_window: 检测同源性的滑动窗口大小（bp）。
-    homology_penalty: ≤0，同源位置match_score的额外惩罚值，0=关闭。
+    For each position in the reference sequence, extracts a centered
+    homology_window-length subsequence. If that subsequence appears elsewhere
+    in the reference (indicating a repetitive/homologous region), the position
+    receives an additional penalty on the match score, biasing the DP alignment
+    against matching in such regions.
 
-    工作原理：
-      对参考序列的每个位置i，提取以其为中心的homology_window长度的子序列。
-      如果该子序列在参考序列的其他位置也存在，则位置i被标记为同源区域，
-      在此处进行match时额外施加homology_penalty惩罚，使DP更不倾向在此处匹配。
+    Args:
+        ref_seq: The reference sequence string.
+        homology_window: Sliding window size for homology detection (bp).
+        homology_penalty: Penalty subtracted from match_score at homologous
+            positions (<=0, 0=disabled).
 
-    返回: 长度为len(ref_seq)的数组，每个元素≤0，homology_penalty=0时全0。
+    Returns:
+        Array of length len(ref_seq) with penalty values (each <=0).
+        All zeros when homology_penalty == 0.
     """
     m = len(ref_seq)
     profile = np.zeros(m, dtype=float)
@@ -212,8 +218,8 @@ def get_amplicon_structure(ref_seq: str, config: AmpliconConfig = None) -> List[
     motif = 'GAGTCG'
     positions = [m.start() for m in re.finditer(motif, ref_seq)]
     if len(positions) < 3:
-        log.warning("无法在参考序列中检测到足够的GAGTCG motif（仅发现%d处）", len(positions))
-        log.warning("请手动提供cutsite位置")
+        log.warning("Insufficient GAGTCG motifs detected in reference sequence (found %d)", len(positions))
+        log.warning("Please provide cutsite positions manually")
         return []
     diffs = [positions[i+1] - positions[i] for i in range(len(positions)-1)]
     first_pos = positions[0]
@@ -235,5 +241,5 @@ def get_amplicon_structure(ref_seq: str, config: AmpliconConfig = None) -> List[
             cs_end = len(ref_seq) - 1
         cutsites.append(CutsiteRegion(name=f"Target{i+1}", start=cs_start, end=cs_end))
     if cutsites:
-        log.info("auto检测: 发现 %d 个cutsite区域 (周期=%dbp, motif起始=%d)", len(cutsites), period, start)
+        log.info("Auto-detected %d cutsite regions (period=%dbp, motif_start=%d)", len(cutsites), period, start)
     return cutsites
