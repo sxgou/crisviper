@@ -39,7 +39,7 @@ from crisviper.config import AmpliconConfig, CutsiteRegion, load_yaml_config, cu
 
 log = get_logger(__name__)
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 
 def _queries_to_records(queries: List[Dict]) -> List[QueryRecord]:

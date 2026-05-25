@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crisviper"
-version = "1.1.0"
+version = "1.2.0"
 description = "谱系示踪序列分析命令行工具 — 仿射gap比对、突变检测、谱系示踪分析"
 readme = "README.md"
 requires-python = ">=3.8"
