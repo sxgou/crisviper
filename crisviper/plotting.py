@@ -126,7 +126,7 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
     if window_end is None:
         window_end = ref_len - 1
     window_end = min(window_end, ref_len - 1)
-    window_start = max(0, window_start)
+    window_start = 0 if window_start is None else max(0, window_start)
     window_len = window_end - window_start + 1
     if window_len <= 0:
         return ""
@@ -446,7 +446,7 @@ def generate_charts(results: List[Dict], report_data: dict = None,
         if report_data:
             charts['indel_length'] = _gen_indel_length_chart(report_data)
         if ref_seq and ref_length > 0:
-            ws = allele_window_start
+            ws = allele_window_start if allele_window_start is not None else 0
             we = allele_window_end if allele_window_end is not None else ref_length - 1
             charts['allele_heatmap'] = _gen_allele_heatmap(
                 results, ref_seq, cutsites=cutsites, top_n=allele_top_n,
