@@ -21,8 +21,9 @@ log = get_logger(__name__)
 
 
 def save_summary_tables(results: List[Dict], output_dir: str,
-                         ref_seq: str = "", cutsites: Optional[list] = None) -> None:
-    """Generate 4 summary TSV tables in the output directory.
+                         ref_seq: str = "", cutsites: Optional[list] = None,
+                         read_to_allele_path: Optional[str] = None) -> Dict:
+    """Generate 5 summary TSV tables and return pre-computed summary statistics.
 
     Tables produced:
       1. allele_frequency.tsv  — Alleles sorted by frequency with read counts/percentages
@@ -32,11 +33,19 @@ def save_summary_tables(results: List[Dict], output_dir: str,
       4b. insertion_length.tsv — Insertion length distribution
       5. event_level_details.tsv — Detailed per-event breakdown
 
+    When original_read_names are present in results and read_to_allele_path
+    is provided, also writes a read-to-allele mapping table.
+
+    Returns:
+        Dict with pre-computed statistics for HTML report: total_reads_successful,
+        mutated/unmutated counts (seqs & reads), indel length reads, etc.
+
     Args:
         results: List of alignment result dicts (from AlignmentResult.to_dict()).
         output_dir: Output directory (created automatically).
         ref_seq: Reference sequence (used for cutsite detection).
         cutsites: CutsiteRegion list (optional; per_target table is empty when absent).
+        read_to_allele_path: Path to write read→allele mapping TSV (optional).
     """
     os.makedirs(output_dir, exist_ok=True)
     successful = [r for r in results if "error" not in r]
@@ -66,11 +75,11 @@ def save_summary_tables(results: List[Dict], output_dir: str,
                 parts.append(f"del:{del_start}-{del_len}bp")
             elif rb == '-' and qb != '-':
                 ins_start = ref_pos
-                ins_len = 0
+                ins_start_idx = i
                 while i < len(ref_base) and ref_base[i] == '-' and query_base[i] != '-':
-                    ins_len += 1
                     i += 1
-                parts.append(f"ins:{ins_start}+{ins_len}bp")
+                ins_seq = query_base[ins_start_idx:i]
+                parts.append(f"ins:{ins_start}+{ins_seq}")
             else:
                 if rb != '-':
                     ref_pos += 1
@@ -88,7 +97,11 @@ def save_summary_tables(results: List[Dict], output_dir: str,
             if typ == "deletion":
                 parts.append(f"del:{pos}-{m.get('length', 1)}bp")
             elif typ == "insertion":
-                parts.append(f"ins:{pos}+{m.get('length', 1)}bp")
+                seq = m.get('query_base', '')
+                if seq:
+                    parts.append(f"ins:{pos}+{seq}")
+                else:
+                    parts.append(f"ins:{pos}+{m.get('length', 1)}bp")
             elif typ == "indel":
                 parts.extend(_split_indel(m))
             elif typ == "substitution":
@@ -350,6 +363,52 @@ def save_summary_tables(results: List[Dict], output_dir: str,
     # 5. event_level_details.tsv
     # ═══════════════════════════════════════════════════════════════
     _save_event_level_table(successful, output_dir, cutsites)
+
+    # ═══════════════════════════════════════════════════════════════
+    # 6. Compute aggregated stats for HTML report
+    # ═══════════════════════════════════════════════════════════════
+    mutated_seqs = 0
+    mutated_reads = 0
+    for r in successful:
+        rc = r.get("readCount", 1)
+        stats = r["stats"]
+        if stats["mismatches"] > 0 or stats["gaps_in_query"] > 0 or stats["gaps_in_ref"] > 0:
+            mutated_seqs += 1
+            mutated_reads += rc
+    unmutated_seqs = len(successful) - mutated_seqs
+    unmutated_reads = total_reads_success - mutated_reads
+    total_reads_all = sum(r.get("readCount", 1) for r in results)
+
+    # ═══════════════════════════════════════════════════════════════
+    # 7. read_to_allele.tsv (when original_read_names are available)
+    # ═══════════════════════════════════════════════════════════════
+    if read_to_allele_path and any("original_read_names" in r for r in successful):
+        parent = os.path.dirname(read_to_allele_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(read_to_allele_path, 'w', newline='') as f:
+            writer = csv.writer(f, delimiter='\t')
+            writer.writerow(["read_name", "allele_label"])
+            for r in successful:
+                label = _allele_label(r.get("mutations", []))
+                for read_name in r.get("original_read_names", []):
+                    writer.writerow([read_name, label])
+        log.info("Read-to-allele mapping saved to %s", read_to_allele_path)
+
+    return {
+        "total_sequences": len(results),
+        "total_reads_all": total_reads_all,
+        "successful_alignments": len(successful),
+        "failed_alignments": len(failed),
+        "total_reads_successful": total_reads_success,
+        "mutated_sequences": mutated_seqs,
+        "unmutated_sequences": unmutated_seqs,
+        "mutated_reads": mutated_reads,
+        "unmutated_reads": unmutated_reads,
+        "editing_efficiency_pct": round(mutated_seqs / len(successful) * 100, 2) if successful else 0.0,
+        "del_length_reads": dict(del_len_reads),
+        "ins_length_reads": dict(ins_len_reads),
+    }
 
 
 def _save_event_level_table(successful: List[Dict], output_dir: str,

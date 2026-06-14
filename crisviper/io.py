@@ -34,20 +34,58 @@ def _read_fastq_counts(fastq_path: str) -> Dict[str, int]:
     return counts
 
 
-def fastq_to_dataframe(fastq_path: str, sample_name: str = "sample") -> List[Dict]:
+def _read_fastq_groups(fastq_path: str) -> Dict[str, List[str]]:
+    """Read a FASTQ file and return {sequence: [read_name, ...]} preserving original read names."""
+    groups = {}
+    if fastq_path.endswith('.gz'):
+        with gzip.open(fastq_path, 'rt') as f:
+            for record in SeqIO.parse(f, "fastq"):
+                seq = str(record.seq)
+                groups.setdefault(seq, []).append(record.id)
+    else:
+        for record in SeqIO.parse(fastq_path, "fastq"):
+            seq = str(record.seq)
+            groups.setdefault(seq, []).append(record.id)
+    return groups
+
+
+def fastq_to_dataframe(fastq_path: str, sample_name: str = "sample",
+                        keep_read_names: bool = False) -> List[Dict]:
     """
     Convert a FASTQ file to a list of deduplicated sequence dicts.
 
     Each unique sequence is represented as a single entry with its
     readCount set to the number of times it appeared in the FASTQ.
 
+    When keep_read_names=True, each row also contains an 'original_read_names'
+    field listing the original FASTQ read identifiers for that sequence.
+
     Args:
         fastq_path: Path to FASTQ file (supports .gz compression).
         sample_name: Sample name for read labeling.
+        keep_read_names: Whether to preserve original read names.
 
     Returns:
         List of dicts with keys: readName, cellBC, UMI, readCount, seq.
+        Also includes 'original_read_names' when keep_read_names=True.
     """
+    if keep_read_names:
+        groups = _read_fastq_groups(fastq_path)
+        rows = []
+        for i, (seq, read_names) in enumerate(groups.items()):
+            rows.append({
+                "readName": f"{sample_name}_seq{i+1}",
+                "cellBC": sample_name,
+                "UMI": f"UMI{i+1}",
+                "readCount": len(read_names),
+                "seq": seq,
+                "original_read_names": read_names,
+            })
+        total_reads = sum(len(n) for n in groups.values())
+        log.info("Read %d unique sequences (%d total reads) from %s (names preserved)",
+                 len(rows), total_reads, fastq_path)
+        return rows
+
     counts = _read_fastq_counts(fastq_path)
 
     # Build list of dicts
@@ -119,8 +157,12 @@ def merge_paired_end(
     max_mismatch_diff: int = 5,
     require_qual: int = 15,
     sample_name: str = "sample",
+    keep_read_names: bool = False,
 ) -> List[Dict]:
     """Merge paired-end reads using fastp and return deduplicated row dicts.
+
+    When keep_read_names=True, each row also contains an 'original_read_names'
+    field listing the original FASTQ read identifiers for that sequence.
 
     Args:
         fastq1: R1 FASTQ file path.
@@ -130,9 +172,11 @@ def merge_paired_end(
         max_mismatch_diff: Max absolute mismatches in overlap (fastp: overlap_diff_limit).
         require_qual: Minimum base quality threshold (fastp: -q).
         sample_name: Sample name for read labeling.
+        keep_read_names: Whether to preserve original read names.
 
     Returns:
         List of dicts (same format as fastq_to_dataframe).
+        Includes 'original_read_names' when keep_read_names=True.
     """
     _check_fastp()
 
@@ -173,11 +217,35 @@ def merge_paired_end(
             sys.exit(1)
 
         # Read merged results
-        counts = {}
         if not os.path.exists(merged_out) or os.path.getsize(merged_out) == 0:
             log.warning("fastp produced no merged reads!")
             return []
 
+        if keep_read_names:
+            groups = {}
+            with open(merged_out) as f:
+                for record in SeqIO.parse(f, "fastq"):
+                    seq = str(record.seq)
+                    groups.setdefault(seq, []).append(record.id)
+            if not groups:
+                log.warning("fastp produced no merged reads!")
+                return []
+            rows = []
+            for i, (seq, read_names) in enumerate(groups.items()):
+                rows.append({
+                    "readName": f"{sample_name}_seq{i+1}",
+                    "cellBC": sample_name,
+                    "UMI": f"UMI{i+1}",
+                    "readCount": len(read_names),
+                    "seq": seq,
+                    "original_read_names": read_names,
+                })
+            total = sum(len(n) for n in groups.values())
+            log.info("fastp merge complete: %d unique sequences (%d total reads, names preserved)",
+                     len(rows), total)
+            return rows
+
+        counts = {}
         with open(merged_out) as f:
             for record in SeqIO.parse(f, "fastq"):
                 seq = str(record.seq)

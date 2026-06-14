@@ -370,6 +370,9 @@ def align_single(
             lineage_mode=config.lineage_mode,
         )
 
+    # ── Step 4b: Merge DEL→INS→DEL artifact patterns ──
+    ar_int, aq_int = _merge_del_ins_del(ar_int, aq_int)
+
     # ── Step 5: WT primer assembly for full-length output ──
     aligned_ref, aligned_query = _assemble_full_length(
         ar_int, aq_int, r_seq, p5, p3,
@@ -530,6 +533,86 @@ def _align_full_standard(
             short_match_discount=config.short_match_discount,
         )
     return score, ar, aq, raw_stats
+
+
+# ═══════════════════════════════════════════════════════════════
+# DEL→INS→DEL artifact correction
+# ═══════════════════════════════════════════════════════════════
+
+def _merge_del_ins_del(ar_int: str, aq_int: str) -> Tuple[str, str]:
+    """Merge DEL→INS→DEL artifact patterns in aligned strings.
+
+    The position-dependent gradient DP can split a single INDEL event into
+    DEL→INS→DEL when gap costs differ sharply across the cutsite boundary.
+    This detects such patterns and re-arranges to contiguous DEL followed
+    by INS, matching the biological reality of NHEJ repair.
+
+    Args:
+        ar_int: Internal-region aligned reference (may contain gaps).
+        aq_int: Internal-region aligned query (may contain gaps).
+
+    Returns:
+        Corrected (ar_int, aq_int) — unchanged if no pattern found.
+    """
+    alen = len(ar_int)
+    if alen == 0 or len(ar_int) != len(aq_int):
+        return ar_int, aq_int
+
+    result_ar = list(ar_int)
+    result_aq = list(aq_int)
+    changed = False
+
+    i = 0
+    while i < alen:
+        # Block 1: deletion (ref base, query gap)
+        if ar_int[i] != '-' and aq_int[i] == '-':
+            b1_start = i
+            while i < alen and ar_int[i] != '-' and aq_int[i] == '-':
+                i += 1
+            b1_end = i
+            b1_len = b1_end - b1_start
+
+            # Block 2: insertion (ref gap, query base) — must immediately follow
+            if i < alen and ar_int[i] == '-' and aq_int[i] != '-':
+                b2_start = i
+                while i < alen and ar_int[i] == '-' and aq_int[i] != '-':
+                    i += 1
+                b2_end = i
+                b2_len = b2_end - b2_start
+
+                # Block 3: deletion (ref base, query gap) — must immediately follow
+                if i < alen and ar_int[i] != '-' and aq_int[i] == '-':
+                    b3_start = i
+                    while i < alen and ar_int[i] != '-' and aq_int[i] == '-':
+                        i += 1
+                    b3_end = i
+                    b3_len = b3_end - b3_start
+                    total_del = b1_len + b3_len
+
+                    # Extract bases to re-arrange
+                    ref_b1 = ar_int[b1_start:b1_end]
+                    ref_b3 = ar_int[b3_start:b3_end]
+                    q_b2 = aq_int[b2_start:b2_end]
+
+                    # Rearrange: [combined ref] + [insertion gaps in ref]
+                    #            [combined del gaps in query] + [insertion bases]
+                    new_ar_seg = ref_b1 + ref_b3 + '-' * b2_len
+                    new_aq_seg = '-' * total_del + q_b2
+
+                    seg_len = b1_len + b2_len + b3_len
+                    result_ar[b1_start:b3_end] = list(new_ar_seg)
+                    result_aq[b1_start:b3_end] = list(new_aq_seg)
+                    changed = True
+
+                    # Continue scanning after the merged region
+                    i = b3_end
+                    continue  # skip the else clause
+        else:
+            i += 1
+
+    if not changed:
+        return ar_int, aq_int
+    return ''.join(result_ar), ''.join(result_aq)
 
 
 # ═══════════════════════════════════════════════════════════════

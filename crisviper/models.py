@@ -78,13 +78,16 @@ class QueryRecord:
     """A single query sequence record with metadata.
 
     Represents one unique sequence read from FASTQ/TSV input,
-    after deduplication by sequence.
+    after deduplication by sequence. When keep_read_names is enabled,
+    original_read_names stores the original FASTQ read identifiers
+    that map to this deduplicated sequence.
     """
     readName: str
     cellBC: str = "unknown"
     UMI: str = "unknown"
     readCount: int = 1
     seq: str = ""
+    original_read_names: List[str] = field(default_factory=list)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -192,6 +195,8 @@ class AlignmentResult:
             "UMI": self.query.UMI,
             "readCount": self.query.readCount,
         }
+        if self.query.original_read_names:
+            base["original_read_names"] = self.query.original_read_names
         if not self.success or self.stats is None:
             base.update({
                 "error": self.error,

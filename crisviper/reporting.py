@@ -119,7 +119,8 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
                      allele_window_start: int = 0,
                      allele_window_end: int = None,
                      allele_top_n: int = 50,
-                     version: str = "2.1.0") -> None:
+                     version: str = "2.1.0",
+                     summary_data: Dict = None) -> None:
     """
     Generate a mutation analysis report in the specified format.
 
@@ -129,6 +130,10 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
       - Indel length distributions (sequence-level and read-weighted)
       - Per-target editing efficiency (when cutsites are available)
       - Mutated sequence details with HGVS annotations
+
+    When summary_data (from save_summary_tables) is provided, its pre-computed
+    summary statistics and indel length reads are used as the source of truth,
+    ensuring the HTML report matches what's shown in the TSV summary tables.
 
     Args:
         results: List of alignment result dicts.
@@ -141,6 +146,7 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
         allele_window_end: End position for allele heatmap window (inclusive).
         allele_top_n: Number of top alleles to show in heatmap (default 50).
         version: Tool version string.
+        summary_data: Pre-computed summary dict from save_summary_tables().
     """
     total_sequences = len(results)
     successful = [r for r in results if "error" not in r]
@@ -320,6 +326,20 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
                 "del": del_c, "ins": ins_c, "sub": sub_c,
             }
 
+    # ── Override with summary_data if provided (source of truth from summary tables) ──
+    if summary_data:
+        report["summary"]["total_sequences"] = summary_data["total_sequences"]
+        report["summary"]["total_reads_all"] = summary_data["total_reads_all"]
+        report["summary"]["successful_alignments"] = summary_data["successful_alignments"]
+        report["summary"]["failed_alignments"] = summary_data["failed_alignments"]
+        report["summary"]["total_reads_successful"] = summary_data["total_reads_successful"]
+        report["summary"]["mutated_sequences"] = summary_data["mutated_sequences"]
+        report["summary"]["unmutated_sequences"] = summary_data["unmutated_sequences"]
+        report["summary"]["mutated_reads"] = summary_data["mutated_reads"]
+        report["summary"]["editing_efficiency_pct"] = summary_data["editing_efficiency_pct"]
+        report["mutation_stats"]["all_deletion_lengths_reads"] = summary_data["del_length_reads"]
+        report["mutation_stats"]["all_insertion_lengths_reads"] = summary_data["ins_length_reads"]
+
     if fmt == "json":
         path = _ensure_extension(output_path, ".json")
         with open(path, 'w') as f:
@@ -348,7 +368,6 @@ def _save_report_html(report: dict, output_path: str, charts: dict = None,
     s = report["summary"]
     mt = report["mutation_types"]
     ms = report["mutation_stats"]
-    detail = report["mutated_sequences_detail"]
 
     # Mutation type table rows
     type_rows = ""
@@ -378,49 +397,6 @@ def _save_report_html(report: dict, output_path: str, charts: dict = None,
             f"</tr>\n"
         )
 
-    # Detailed sequence table HTML rows
-    MUT_CLASSES = {"deletion": "mut-del", "insertion": "mut-ins", "substitution": "mut-sub"}
-
-    def _mut_summary(muts):
-        parts = []
-        for m in muts:
-            typ = m.get("type", "")
-            pos = m.get("ref_pos", -1) + 1
-            if typ == "deletion":
-                label = f"Δ{pos}-{m.get('length',1)}bp"
-                cls = "mut-tag mut-tag-del"
-            elif typ == "insertion":
-                label = f"ins@{pos}+{m.get('query_base','')}"
-                cls = "mut-tag mut-tag-ins"
-            elif typ == "substitution":
-                label = f"{m.get('ref_base','?')}{pos}{m.get('query_base','?')}"
-                cls = "mut-tag mut-tag-sub"
-            else:
-                label = str(typ)
-                cls = "mut-tag"
-            parts.append(f'<span class="{cls}">{label}</span>')
-        return " ".join(parts)
-
-    detail_rows = ""
-    for i, d in enumerate(detail[:100]):
-        muts = d.get("mutations", [])
-        mut_summary = _mut_summary(muts)
-        mut_html = f'<span class="mut-summary">{mut_summary}</span>' if mut_summary else '<span style="color:#999;">-</span>'
-        detail_rows += (
-            f"<tr>"
-            f"<td>{i+1}</td>"
-            f"<td>{d['readName']}</td>"
-            f"<td>{d['readCount']}</td>"
-            f"<td>{d['mismatches']}</td>"
-            f"<td>{d['gaps_in_ref']}</td>"
-            f"<td>{d['gaps_in_query']}</td>"
-            f"<td>{d['similarity']}</td>"
-            f"<td>{mut_html}</td>"
-            f"</tr>\n"
-        )
-    if len(detail) > 100:
-        detail_rows += f"<tr><td colspan='8' style='text-align:center;color:#888;'>... and {len(detail)-100} more mutated sequences not shown</td></tr>\n"
-
     # Embed chart images
     def _img_html(key):
         b64 = (charts or {}).get(key, '')
@@ -431,7 +407,7 @@ def _save_report_html(report: dict, output_path: str, charts: dict = None,
 
     has_charts = bool(charts)
     chart_map = {k: _img_html(k) for k in [
-        'indel_length', 'allele_heatmap',
+        'editing_pie', 'indel_length', 'allele_heatmap',
     ]}
 
 
@@ -505,12 +481,11 @@ footer{{margin-top:30px;padding-top:10px;border-top:1px solid var(--bdr);
 <nav class="sidebar">
   <h1>CrisViper</h1>
   <a href="#summary">Summary</a>
-  <a href="#indel-length">Indel Length</a>
+  <a href="#editing-indel">Editing & Indel</a>
   <a href="#target-breakdown">Targets</a>
   <a href="#heatmap">Allele Heatmap</a>
   <a href="#mutation-types">Mutation Types</a>
   <a href="#stats">Statistics</a>
-  <a href="#details">Details</a>
 </nav>
 <div class="main">
 
@@ -526,8 +501,8 @@ footer{{margin-top:30px;padding-top:10px;border-top:1px solid var(--bdr);
   <div class="card"><div class="lbl">Failed</div><div class="val">{s["failed_alignments"]}</div></div>
 </div>
 
-<h2 id="indel-length">Indel Length Distribution</h2>
-{has_charts and f'''<div class="chart-box">{chart_map["indel_length"]}</div>''' or ''}
+<h2 id="editing-indel">Editing & Indel Analysis</h2>
+{has_charts and f'''<div class="chart-row"><div class="chart-box">{chart_map["editing_pie"]}</div><div class="chart-box">{chart_map["indel_length"]}</div></div>''' or ''}
 
 <h2 id="mutation-types">Mutation Type Distribution</h2>
 <table>
@@ -560,14 +535,6 @@ footer{{margin-top:30px;padding-top:10px;border-top:1px solid var(--bdr);
 {has_charts and f'''<h2 id="heatmap">Allele Heatmap</h2>
 <div class="chart-box">{chart_map["allele_heatmap"]}</div>''' or ''}
 
-<h2 id="details">Mutated Sequence Details (Top 100)</h2>
-<table id="detailTable">
-<thead><tr><th onclick="sortTable(0)">#</th><th onclick="sortTable(1)">Name</th><th onclick="sortTable(2)">Reads</th><th onclick="sortTable(3)">Mismatches</th><th onclick="sortTable(4)">Insertions</th><th onclick="sortTable(5)">Deletions</th><th onclick="sortTable(6)">Similarity</th><th>Mutations</th></tr></thead>
-<tbody>
-{detail_rows}
-</tbody>
-</table>
-
 <footer>Generated by CrisViper v{report["version"]}</footer>
 </div>
 
@@ -578,21 +545,6 @@ footer{{margin-top:30px;padding-top:10px;border-top:1px solid var(--bdr);
 function openModal(img){{
   document.getElementById('modalImg').src=img.src;
   document.getElementById('modalOverlay').classList.add('active');
-}}
-function sortTable(col){{
-  var t=document.getElementById('detailTable'),b=t.querySelector('tbody'),r=Array.from(b.querySelectorAll('tr'));
-  var lr=r[r.length-1]; if(lr&&lr.cells.length===1) r.pop();
-  var asc=t.getAttribute('data-sort')==col?t.getAttribute('data-asc')!=='true':true;
-  r.sort(function(a,b){{
-    var va=a.cells[col].textContent.trim(),vb=b.cells[col].textContent.trim();
-    var na=parseFloat(va),nb=parseFloat(vb);
-    return !isNaN(na)&&!isNaN(nb)?(asc?na-nb:nb-na):(asc?va.localeCompare(vb):vb.localeCompare(va));
-  }});
-  r.forEach(function(x){{b.appendChild(x);}});
-  if(lr&&lr.cells.length===1) b.appendChild(lr);
-  t.setAttribute('data-sort',col); t.setAttribute('data-asc',asc);
-  var ths=t.querySelectorAll('th');ths.forEach(function(th,i){{if(i<7) th.textContent=th.textContent.replace(/[\u25B2\u25BC]/g,'');}});
-  if(col<7) ths[col].textContent+=asc?' \u25B2':' \u25BC';
 }}
 </script>
 </body>

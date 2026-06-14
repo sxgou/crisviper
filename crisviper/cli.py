@@ -211,12 +211,29 @@ def main():
     # ── Sub-command: align (parallel batch alignment) ─────────────
     align_parser = subparsers.add_parser("align", help="Parallel batch sequence alignment")
     align_parser.add_argument("--reference", required=True, help="Reference sequence FASTA file")
-    align_parser.add_argument("--queries", required=True, help="Query sequence file (TSV or FASTA format)")
+    align_parser.add_argument("--queries", default=None,
+                              help="Query sequence file (TSV, FASTA, or FASTQ). For paired-end input, "
+                                   "use --fastq1 and --fastq2 instead.")
+    align_parser.add_argument("--fastq1", default=None,
+                              help="R1 paired-end FASTQ file (requires --fastq2). Overrides --queries.")
+    align_parser.add_argument("--fastq2", default=None,
+                              help="R2 paired-end FASTQ file (requires --fastq1).")
     align_parser.add_argument("--output", required=True, help="Output file path (used as prefix with --format all)")
     align_parser.add_argument("--config", default=None,
                               help="YAML config file for target/amplicon structure and pipeline parameters (see crisviper_config.yaml)")
     align_parser.add_argument("--format", choices=["json", "tsv", "all"], default="json",
                               help="Output format: json (default), tsv, all")
+    align_parser.add_argument("--sample-name", default="sample",
+                              help="Sample name for read labeling (used when input is FASTQ)")
+    # Paired-end merge parameters
+    align_parser.add_argument("--min-overlap", type=int, default=10,
+                              help="Minimum overlap length for paired-end merging (bp, default: 10)")
+    align_parser.add_argument("--max-mismatch-rate", type=int, default=20,
+                              help="Max mismatch rate in overlap region for merging (%%, default: 20)")
+    align_parser.add_argument("--max-mismatch-diff", type=int, default=5,
+                              help="Max absolute mismatches in overlap region (default: 5)")
+    align_parser.add_argument("--require-qual", type=int, default=15,
+                              help="Minimum base quality score (Phred) for merging (default: 15)")
 
     # Alignment parameters (default=None means: use YAML config first, then PipelineConfig defaults)
     align_parser.add_argument("--match-score", type=float, default=None,
@@ -594,6 +611,10 @@ def main():
                                    "50 for standard reports with good coverage. 100-200 for comprehensive "
                                    "views of complex editing outcomes. 10-20 for quick overviews or when "
                                    "only dominant clones are of interest.")
+    align_parser.add_argument("--read-to-allele", metavar="FILE", default=None,
+                              help="Output path for read-to-allele mapping TSV. Requires FASTQ input (--queries "
+                                   "or --fastq1/--fastq2). Only supported with FASTQ input; TSV and FASTA inputs "
+                                   "will ignore this option with a warning.")
 
     args = parser.parse_args()
     setup_logging(verbose=args.verbose, quiet=args.quiet)
@@ -652,13 +673,44 @@ def main():
         t = _log_timing(log, "Read reference", t0)
 
         # Read query sequences
-        queries_path = args.queries
-        if queries_path.endswith('.tsv'):
-            queries = read_queries_tsv(queries_path)
-        elif queries_path.endswith(('.fasta', '.fa', '.fas')):
-            queries = read_queries_fasta(queries_path)
+        read_to_allele_active = bool(args.read_to_allele)
+        if args.fastq1 and args.fastq2:
+            # Paired-end FASTQ input
+            log.info("Processing paired-end FASTQ: %s + %s", args.fastq1, args.fastq2)
+            queries = merge_paired_end(
+                args.fastq1, args.fastq2,
+                min_overlap=args.min_overlap,
+                max_mismatch_rate=args.max_mismatch_rate,
+                max_mismatch_diff=args.max_mismatch_diff,
+                require_qual=args.require_qual,
+                sample_name=args.sample_name,
+                keep_read_names=read_to_allele_active,
+            )
+        elif args.fastq1 or args.fastq2:
+            log.error("--fastq1 and --fastq2 must be used together")
+            sys.exit(1)
+        elif args.queries:
+            queries_path = args.queries
+            if queries_path.endswith('.tsv'):
+                queries = read_queries_tsv(queries_path)
+                if read_to_allele_active:
+                    log.warning("--read-to-allele is not supported with TSV input. "
+                                "Use FASTQ input (single or paired-end) to generate read-to-allele mapping.")
+                    read_to_allele_active = False
+            elif queries_path.endswith(('.fasta', '.fa', '.fas')):
+                queries = read_queries_fasta(queries_path)
+                if read_to_allele_active:
+                    log.warning("--read-to-allele is not supported with FASTA input. "
+                                "Use FASTQ input (single or paired-end) to generate read-to-allele mapping.")
+                    read_to_allele_active = False
+            elif queries_path.endswith(('.fq', '.fastq', '.fq.gz', '.fastq.gz')):
+                queries = fastq_to_dataframe(queries_path, args.sample_name,
+                                              keep_read_names=read_to_allele_active)
+            else:
+                log.error("Unsupported query file format: %s", queries_path)
+                sys.exit(1)
         else:
-            log.error("Unsupported query file format: %s", queries_path)
+            log.error("Specify --queries (single-end) or --fastq1 + --fastq2 (paired-end) for input")
             sys.exit(1)
         t = _log_timing(log, "Read queries", t)
 
@@ -720,8 +772,9 @@ def main():
 
         # ── Save summary tables ──
         output_dir = os.path.dirname(os.path.abspath(args.output))
-        save_summary_tables(output_results, output_dir, ref_seq=ref_seq,
-                            cutsites=_get_display_cutsites(ref_seq))
+        summary_data = save_summary_tables(output_results, output_dir, ref_seq=ref_seq,
+                                            cutsites=_get_display_cutsites(ref_seq),
+                                            read_to_allele_path=args.read_to_allele if read_to_allele_active else None)
         t = _log_timing(log, "Save summary tables", t)
 
         # ── Generate analysis report ──
@@ -735,7 +788,8 @@ def main():
                              allele_window_start=args.allele_window_start,
                              allele_window_end=args.allele_window_end,
                              allele_top_n=args.allele_top_n,
-                             version=__version__)
+                             version=__version__,
+                             summary_data=summary_data)
             t = _log_timing(log, "Generate HTML report", t)
 
         total = time.perf_counter() - t0

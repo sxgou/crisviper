@@ -62,22 +62,25 @@ def _gen_indel_length_chart(report_data: dict) -> str:
         ins_counts = {int(k): v for k, v in ins_counts.items()}
         del_counts = {int(k): v for k, v in del_counts.items()}
 
+    # Full range from 1 to max observed length (no 50bp cap)
     all_keys = list(ins_counts.keys()) + list(del_counts.keys())
-    max_len = min(max(all_keys) if all_keys else 1, 50)
+    if not all_keys:
+        return ""
+    max_len = max(all_keys)
     all_lengths = list(range(1, max_len + 1))
     ins_raw_vals = [ins_counts.get(l, 0) for l in all_lengths]
     del_raw_vals = [del_counts.get(l, 0) for l in all_lengths]
 
     total_ins = sum(ins_counts.values())
     total_del = sum(del_counts.values())
-    # Convert to percentages
     ins_pct = [v / total_ins * 100 if total_ins else 0 for v in ins_raw_vals]
     del_pct = [-v / total_del * 100 if total_del else 0 for v in del_raw_vals]
 
     max_pct = max(max(ins_pct) if ins_pct else 0, max(abs(x) for x in del_pct) if del_pct else 0)
-    y_lim = max(10, ((max_pct // 10) + 1) * 10)  # Round up to nearest 10%
+    y_lim = max(10, ((max_pct // 10) + 1) * 10)
 
-    fig, ax = plt.subplots(figsize=(8, 3.5))
+    # Fixed aspect ratio matching the pie chart (in chart-scroll for overflow)
+    fig, ax = plt.subplots(figsize=(6, 3))
     ax.bar(all_lengths, ins_pct, color='#20c997', width=0.8,
            label=f'Insertion ({total_ins} reads)')
     ax.bar(all_lengths, del_pct, color='#ff6b6b', width=0.8,
@@ -85,12 +88,54 @@ def _gen_indel_length_chart(report_data: dict) -> str:
     ax.axhline(0, color='#333', linewidth=0.5)
     ax.set_xlabel('Indel Length (bp)')
     ax.set_ylabel('Reads (%)')
-    ax.set_title('Indel Length Distribution (Butterfly Chart)')
-    ax.set_xticks(all_lengths)
+    ax.set_title('Indel Length Distribution')
+    if max_len <= 50:
+        ax.set_xticks(all_lengths)
+    elif max_len <= 100:
+        ax.set_xticks(range(0, max_len + 1, 10))
+    elif max_len <= 200:
+        ax.set_xticks(range(0, max_len + 1, 20))
+    else:
+        ax.set_xticks(range(0, max_len + 1, 50))
     ax.set_ylim(-y_lim, y_lim)
     ax.set_yticks(range(-int(y_lim), int(y_lim) + 1, 10))
     ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{int(abs(x))}%'))
     ax.legend(fontsize=9, loc='upper right')
+    fig.tight_layout()
+    return _img_to_b64(fig)
+
+
+def _gen_editing_pie_charts(report_data: dict) -> str:
+    """Dual pie charts: editing efficiency by sequence count and by read count."""
+    s = report_data.get("summary", {})
+    mutated_seqs = s.get("mutated_sequences", 0)
+    unmutated_seqs = s.get("unmutated_sequences", 0)
+    mutated_reads = s.get("mutated_reads", 0)
+    total_reads = s.get("total_reads_successful", 0)
+    unmutated_reads = total_reads - mutated_reads
+
+    if mutated_seqs + unmutated_seqs == 0 or total_reads == 0:
+        return ""
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6, 3))
+    colors = ['#ff6b6b', '#e2e8f0']
+    explode = (0.03, 0)
+
+    # Pie 1: by sequence count
+    ax1.pie([mutated_seqs, unmutated_seqs], labels=['Mutated', 'Unmutated'],
+            autopct='%1.1f%%', colors=colors, explode=explode,
+            startangle=90, textprops={'fontsize': 8})
+    ax1.set_title(f'By Sequence\n({mutated_seqs:,} / {mutated_seqs + unmutated_seqs:,})',
+                  fontsize=9, fontweight='bold')
+
+    # Pie 2: by read count
+    ax2.pie([mutated_reads, unmutated_reads], labels=['Mutated', 'Unmutated'],
+            autopct='%1.1f%%', colors=colors, explode=explode,
+            startangle=90, textprops={'fontsize': 8})
+    ax2.set_title(f'By Read\n({mutated_reads:,} / {total_reads:,})',
+                  fontsize=9, fontweight='bold')
+
+    fig.suptitle('Editing Efficiency', fontsize=11, fontweight='bold', y=1.02)
     fig.tight_layout()
     return _img_to_b64(fig)
 
@@ -425,7 +470,8 @@ def generate_charts(results: List[Dict], report_data: dict = None,
     """
     Generate all chart images and return as a {chart_name: base64} dictionary.
 
-    Currently produces two charts:
+    Currently produces three charts:
+      - editing_pie: dual pie charts of editing efficiency (by sequence and by read)
       - indel_length: butterfly chart of insertion/deletion length distribution
       - allele_heatmap: base-level heatmap of top N alleles
 
@@ -445,6 +491,7 @@ def generate_charts(results: List[Dict], report_data: dict = None,
     try:
         if report_data:
             charts['indel_length'] = _gen_indel_length_chart(report_data)
+            charts['editing_pie'] = _gen_editing_pie_charts(report_data)
         if ref_seq and ref_length > 0:
             ws = allele_window_start if allele_window_start is not None else 0
             we = allele_window_end if allele_window_end is not None else ref_length - 1
