@@ -32,12 +32,19 @@ def _ensure_mpl():
         return False
 
 
-def _img_to_b64(fig) -> str:
-    """Convert a matplotlib figure to a base64-encoded PNG string for HTML embedding."""
+def _img_to_b64(fig, **savefig_kw) -> str:
+    """Convert a matplotlib figure to a base64-encoded PNG string for HTML embedding.
+
+    Args:
+        fig: Matplotlib figure to convert.
+        **savefig_kw: Extra kwargs forwarded to fig.savefig() (e.g., bbox_inches=None).
+    """
     if fig is None:
         return ""
     buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=120, bbox_inches='tight', facecolor='white')
+    kwargs = dict(format='png', dpi=120, facecolor='white')
+    kwargs.update(savefig_kw)
+    fig.savefig(buf, **kwargs)
     buf.seek(0)
     img_b64 = base64.b64encode(buf.read()).decode('utf-8')
     if plt is not None:
@@ -325,19 +332,15 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
     if n_cols > 200:
         cell_size = 10
         font_size = 5.5
-        skip_cell_text = True
     elif n_cols > 100:
         cell_size = 14
         font_size = 6.5
-        skip_cell_text = True
     elif n_cols > 60:
         cell_size = 18
         font_size = 7
-        skip_cell_text = False
     else:
         cell_size = 22
         font_size = 9
-        skip_cell_text = False
 
     label_w = 180  # Right-side annotation width (px)
     fig_w_px = grid_cols * cell_size + label_w
@@ -435,23 +438,25 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
                 facecolor='none', edgecolor='#e94560', linewidth=1.5, zorder=5
             ))
 
-        # Optional cell text for small grids (substitutions shown in bold)
-        if not skip_cell_text:
-            for ci in range(n_cols):
-                base = sq[ci] if ci < len(sq) else '-'
-                ref_base = rf[ci] if ci < len(rf) else ''
-                is_del = (base == '-')
-                is_ins_col = (ref_base == '')
-                is_sub = (not is_del and not is_ins_col and base != ref_base)
-                if is_ins_col:
-                    ax.text(ci + 0.5, y, base, ha='center', va='center',
-                            fontsize=font_size, color='red', fontweight='bold')
-                elif is_del:
-                    ax.text(ci + 0.5, y, '-', ha='center', va='center',
-                            fontsize=font_size, color='#666', fontweight='bold')
-                elif is_sub:
-                    ax.text(ci + 0.5, y, base, ha='center', va='center',
-                            fontsize=font_size, fontweight='bold')
+        # Cell text: always show bases, colored by mutation type
+        for ci in range(n_cols):
+            base = sq[ci] if ci < len(sq) else '-'
+            ref_base = rf[ci] if ci < len(rf) else ''
+            is_del = (base == '-')
+            is_ins_col = (ref_base == '')
+            is_sub = (not is_del and not is_ins_col and base != ref_base)
+            if is_ins_col:
+                ax.text(ci + 0.5, y, base, ha='center', va='center',
+                        fontsize=font_size, color='red', fontweight='bold')
+            elif is_del:
+                ax.text(ci + 0.5, y, '-', ha='center', va='center',
+                        fontsize=font_size, color='#666', fontweight='bold')
+            elif is_sub:
+                ax.text(ci + 0.5, y, base, ha='center', va='center',
+                        fontsize=font_size, fontweight='bold')
+            else:
+                ax.text(ci + 0.5, y, base, ha='center', va='center',
+                        fontsize=font_size, fontweight='normal')
 
         # Right-side label with percentage and read count
         pct = total_rc / total_reads * 100
@@ -472,7 +477,8 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
 
     ax.set_title(f'Top {top_n} Alleles — ref {window_start + 1}–{window_end + 1}bp ({n_cols}bp)',
                  fontsize=max(10, font_size + 3), pad=4)
-    return _img_to_b64(fig)
+    fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
+    return _img_to_b64(fig, bbox_inches=None)
 
 
 def generate_charts(results: List[Dict], report_data: dict = None,
