@@ -303,14 +303,21 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
 
     grid_cols = n_cols  # Fixed to reference column count
 
-    # 4. Base color map
-    base_colors = {
-        'A': '#cbe9cb', 'C': '#fee5ce', 'G': '#ffffd6',
-        'T': '#e5deed', 'U': '#e5deed', 'N': '#e9e9e9',
-        'a': '#cbe9cb', 'c': '#fee5ce', 'g': '#ffffd6',
-        't': '#e5deed', 'u': '#e5deed', 'n': '#e9e9e9',
-        '-': '#f0f0f0',
+    # 4. Base color map (hex → RGB for imshow)
+    import numpy as np
+
+    def _hex_to_rgb(h):
+        h = h.lstrip('#')
+        return (int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0)
+
+    base_colors_rgb = {
+        'A': _hex_to_rgb('#cbe9cb'), 'C': _hex_to_rgb('#fee5ce'),
+        'G': _hex_to_rgb('#ffffd6'), 'T': _hex_to_rgb('#e5deed'),
+        'N': _hex_to_rgb('#e9e9e9'), '-': _hex_to_rgb('#f0f0f0'),
     }
+    ins_bg_rgb = _hex_to_rgb('#ffcccc')   # insertion column background
+    del_bg_rgb = _hex_to_rgb('#f0f0f0')   # deletion cell background
+    alt_bg_rgb = _hex_to_rgb('#f8f8f8')   # alternating row tint
 
     n_rows = len(top_alleles)
 
@@ -318,15 +325,19 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
     if n_cols > 200:
         cell_size = 10
         font_size = 5.5
+        skip_cell_text = True
     elif n_cols > 100:
         cell_size = 14
         font_size = 6.5
+        skip_cell_text = True
     elif n_cols > 60:
         cell_size = 18
         font_size = 7
+        skip_cell_text = False
     else:
         cell_size = 22
         font_size = 9
+        skip_cell_text = False
 
     label_w = 180  # Right-side annotation width (px)
     fig_w_px = grid_cols * cell_size + label_w
@@ -336,27 +347,48 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
     fig_w = max(8, fig_w_px / dpi)
     fig_h = max(3, fig_h_px / dpi)
 
+    # Build RGB grid for imshow (single render call instead of thousands of patches+texts)
+    grid = np.zeros((n_rows, n_cols, 3), dtype=np.float32)
+    for ai, (sq, rf, blk, total_rc) in enumerate(row_data):
+        for ci in range(n_cols):
+            base = sq[ci] if ci < len(sq) else '-'
+            ref_base = rf[ci] if ci < len(rf) else ''
+            if ref_base == '':       # insertion column
+                color = ins_bg_rgb
+            elif base == '-':        # deletion
+                color = del_bg_rgb
+            else:
+                color = base_colors_rgb.get(base.upper(), (0.91, 0.91, 0.91))
+            if ai % 2 == 1:
+                color = tuple(c * 0.92 + 0.08 for c in color)  # blend with alt row bg
+            grid[ai, ci] = color
+
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
     ax.set_xlim(0, grid_cols + 3)
     ax.set_ylim(-2.5, n_rows + 2.5)
     ax.set_aspect('equal')
     ax.axis('off')
 
-    # 6. Reference sequence row (grid_cols columns, blank beyond n_cols)
-    ref_y = n_rows + 1.5
-    for ci in range(grid_cols):
-        if ci < n_cols:
-            base = window_ref_bases[ci] if ci < len(window_ref_bases) else ' '
-            color = base_colors.get(base, '#e9e9e9')
-            ax.add_patch(plt.Rectangle((ci, ref_y - 0.5), 1, 1,
-                                        facecolor=color, edgecolor='white', linewidth=0.3))
-            ax.text(ci + 0.5, ref_y, base, ha='center', va='center',
-                    fontsize=font_size, fontweight='normal')
-        else:
-            ax.add_patch(plt.Rectangle((ci, ref_y - 0.5), 1, 1,
-                                        facecolor='white', edgecolor='white', linewidth=0))
+    # 6. Render the allele grid as a single image
+    ax.imshow(grid, extent=[0, n_cols, 0, n_rows], aspect='equal',
+              interpolation='nearest', origin='upper', zorder=1)
 
-    # Annotate cutsite regions (semi-transparent grey boxes based on ref coords n_cols)
+    # 7. Reference sequence row (individual patches+text, ~O(n_cols) ≈ fast)
+    ref_y = n_rows + 1.5
+    for ci in range(n_cols):
+        base = window_ref_bases[ci] if ci < len(window_ref_bases) else ' '
+        color = '#e9e9e9'
+        for k, v in base_colors_rgb.items():
+            if k == base or k == base.upper():
+                color = '#{:02x}{:02x}{:02x}'.format(
+                    int(v[0]*255), int(v[1]*255), int(v[2]*255))
+                break
+        ax.add_patch(plt.Rectangle((ci, ref_y - 0.5), 1, 1,
+                                    facecolor=color, edgecolor='white', linewidth=0.3))
+        ax.text(ci + 0.5, ref_y, base, ha='center', va='center',
+                fontsize=font_size, fontweight='normal')
+
+    # Cutsite annotations on reference row
     if cutsites:
         for cs in cutsites:
             if cs.start > window_end or cs.end < window_start:
@@ -366,10 +398,10 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
             if cs_c0 <= cs_c1:
                 ax.add_patch(plt.Rectangle(
                     (cs_c0, ref_y - 0.5), cs_c1 - cs_c0 + 1, 1,
-                    facecolor='#888888', alpha=0.3, edgecolor=None, zorder=0
+                    facecolor='#888888', alpha=0.3, edgecolor=None, zorder=2
                 ))
 
-    # 8. sgRNA region indicators (half-height grey bars just below reference row)
+    # sgRNA region indicators (half-height grey bars just below reference row)
     if cutsites:
         ref_pos_to_col = {rp: rp - window_start for rp in range(window_start, window_end + 1)}
         grna_y = ref_y - 0.75
@@ -386,62 +418,47 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
                 continue
             ax.add_patch(plt.Rectangle(
                 (col0, grna_y - 0.3), col1 - col0 + 1, 0.6,
-                facecolor='#bbbbbb', edgecolor='#999999', linewidth=0.3, zorder=0
+                facecolor='#bbbbbb', edgecolor='#999999', linewidth=0.3, zorder=2
             ))
             ax.text(col0 - 0.1, grna_y, cs.name.replace('Target', 'T'),
                     ha='right', va='center', fontsize=max(6, font_size - 0.5),
                     color='#666', fontweight='bold')
 
-    # 7. Allele rows (using extended display columns, insertions bounded in red)
-    ins_box_color = '#e94560'
+    # 8. Overlay: insertion red boxes, right-side labels, optional cell text
     for ai, (sq, rf, blk, total_rc) in enumerate(row_data):
         y = n_rows - 1 - ai
-
-        # Alternating row background
-        if ai % 2 == 1:
-            ax.add_patch(plt.Rectangle((0, y - 0.5), grid_cols, 1,
-                                        facecolor='#f8f8f8', edgecolor=None, zorder=0))
-
-        for ci in range(grid_cols):
-            base = sq[ci] if ci < len(sq) else '-'
-            ref_base = rf[ci] if ci < len(rf) else ''
-            is_del = (base == '-')
-            is_ins_col = (ref_base == '')
-            is_sub = (not is_del and not is_ins_col and base != ref_base)
-
-            if is_ins_col:
-                color = '#ffcccc'
-            elif is_del:
-                color = '#f0f0f0'
-            else:
-                color = base_colors.get(base, '#e9e9e9')
-
-            ax.add_patch(plt.Rectangle((ci, y - 0.5), 1, 1,
-                                        facecolor=color, edgecolor='white', linewidth=0.2))
-            if is_ins_col:
-                ax.text(ci + 0.5, y, base, ha='center', va='center',
-                        fontsize=font_size, color='red', fontweight='bold')
-            elif is_del:
-                ax.text(ci + 0.5, y, '-', ha='center', va='center',
-                        fontsize=font_size, color='#666', fontweight='bold')
-            else:
-                wgt = 'bold' if is_sub else 'normal'
-                ax.text(ci + 0.5, y, base, ha='center', va='center',
-                        fontsize=font_size, fontweight=wgt)
 
         # Red box marking insertion blocks
         for start, end in blk:
             ax.add_patch(plt.Rectangle(
                 (start, y - 0.5), end - start + 1, 1,
-                facecolor='none', edgecolor=ins_box_color, linewidth=1.5, zorder=5
+                facecolor='none', edgecolor='#e94560', linewidth=1.5, zorder=5
             ))
+
+        # Optional cell text for small grids (substitutions shown in bold)
+        if not skip_cell_text:
+            for ci in range(n_cols):
+                base = sq[ci] if ci < len(sq) else '-'
+                ref_base = rf[ci] if ci < len(rf) else ''
+                is_del = (base == '-')
+                is_ins_col = (ref_base == '')
+                is_sub = (not is_del and not is_ins_col and base != ref_base)
+                if is_ins_col:
+                    ax.text(ci + 0.5, y, base, ha='center', va='center',
+                            fontsize=font_size, color='red', fontweight='bold')
+                elif is_del:
+                    ax.text(ci + 0.5, y, '-', ha='center', va='center',
+                            fontsize=font_size, color='#666', fontweight='bold')
+                elif is_sub:
+                    ax.text(ci + 0.5, y, base, ha='center', va='center',
+                            fontsize=font_size, fontweight='bold')
 
         # Right-side label with percentage and read count
         pct = total_rc / total_reads * 100
         ax.text(grid_cols + 0.3, y, f"{pct:.1f}% ({total_rc})",
                 ha='left', va='center', fontsize=max(8, font_size + 1))
 
-    # Legend
+    # 9. Legend (A, C, G, T, -, ins)
     lgy = -1.2
     items = [('A', '#cbe9cb'), ('C', '#fee5ce'), ('G', '#ffffd6'),
              ('T', '#e5deed'), ('-', '#f0f0f0'), ('ins', '#ffcccc')]
@@ -455,7 +472,6 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
 
     ax.set_title(f'Top {top_n} Alleles — ref {window_start + 1}–{window_end + 1}bp ({n_cols}bp)',
                  fontsize=max(10, font_size + 3), pad=4)
-    fig.tight_layout()
     return _img_to_b64(fig)
 
 
