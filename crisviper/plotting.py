@@ -429,7 +429,7 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
 
     # 8. Overlay: insertion red boxes, right-side labels, optional cell text
     for ai, (sq, rf, blk, total_rc) in enumerate(row_data):
-        y = n_rows - 1 - ai
+        y = n_rows - 0.5 - ai
 
         # Red box marking insertion blocks
         for start, end in blk:
