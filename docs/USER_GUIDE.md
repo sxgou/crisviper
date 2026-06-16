@@ -128,14 +128,30 @@ ACGTACGT...
 
 | Option | Default | Description / 说明 |
 |--------|---------|-------------|
-| `--fastq` | — | 输入 FASTQ（支持 .gz） |
+| `--fastq` | — | 输入 FASTQ（单端，支持 .gz） |
+| `--fastq1` | — | 双端 R1 FASTQ（需与 `--fastq2` 共用） |
+| `--fastq2` | — | 双端 R2 FASTQ（需与 `--fastq1` 共用） |
 | `--output` | — | 输出 TSV 路径 |
 | `--sample-name` | `sample` | 样本名称 |
 | `--min-reads` | 1 | 最小 read 数过滤 |
+| `--min-overlap` | 10 | 双端合并最小重叠长度 (bp) |
+| `--max-mismatch-rate` | 20 | 重叠区域最大错配率 (%) |
+| `--max-mismatch-diff` | 5 | 重叠区域最大绝对错配数 |
+| `--require-qual` | 15 | 合并最低碱基质量 (Phred) |
 
 ### `crisviper convert fastq-to-fasta`
 
-同上，但不支持 `--min-reads`。
+| Option | Default | Description / 说明 |
+|--------|---------|-------------|
+| `--fastq` | — | 输入 FASTQ（单端，支持 .gz） |
+| `--fastq1` | — | 双端 R1 FASTQ（需与 `--fastq2` 共用） |
+| `--fastq2` | — | 双端 R2 FASTQ（需与 `--fastq1` 共用） |
+| `--output` | — | 输出 FASTA 路径 |
+| `--sample-name` | `sample` | 样本名称 |
+| `--min-overlap` | 10 | 双端合并最小重叠长度 (bp) |
+| `--max-mismatch-rate` | 20 | 重叠区域最大错配率 (%) |
+| `--max-mismatch-diff` | 5 | 重叠区域最大绝对错配数 |
+| `--require-qual` | 15 | 合并最低碱基质量 (Phred) |
 
 ### `crisviper align`
 
@@ -144,10 +160,15 @@ ACGTACGT...
 | Option | Default | Description / 说明 |
 |--------|---------|-------------|
 | `--reference` | — | 参考序列 FASTA |
-| `--queries` | — | 查询序列文件（TSV 或 FASTA） |
+| `--queries` | — | 查询序列文件（TSV、FASTA 或 FASTQ） |
+| `--fastq1` | — | 双端 R1 FASTQ 文件（需与 `--fastq2` 共用） |
+| `--fastq2` | — | 双端 R2 FASTQ 文件（需与 `--fastq1` 共用） |
 | `--output` | — | 输出路径（`--format all` 时作为前缀） |
 | `--format` | `json` | 输出格式：`json`、`tsv`、`all` |
+| `--config` | — | YAML 配置文件（靶标/扩增子结构和管道参数） |
+| `--sample-name` | `sample` | FASTQ 输入时的样本标记名 |
 | `--threads` / `-t` | 1 | 并行进程数 |
+| `--chunk-size` | auto | 每批处理的序列数，自动计算 |
 
 **打分参数：**
 
@@ -193,7 +214,16 @@ ACGTACGT...
 | `--primer5-threshold` | 19 | 5' 引物匹配碱基数阈值 |
 | `--primer3-threshold` | 29 | 3' 引物匹配碱基数阈值 |
 
-**Allele 过滤参数：**
+**配对端合并参数（仅 FASTQ 输入）：**
+
+| Option | Default | Description / 说明 |
+|--------|---------|-------------|
+| `--min-overlap` | 10 | 配对端合并最小重叠长度 (bp) |
+| `--max-mismatch-rate` | 20 | 重叠区域最大错配率 (%) |
+| `--max-mismatch-diff` | 5 | 重叠区域最大绝对错配数 |
+| `--require-qual` | 15 | 合并最低碱基质量 (Phred) |
+
+**Allele 过滤和输出参数：**
 
 | Option | Default | Description / 说明 |
 |--------|---------|-------------|
@@ -201,7 +231,9 @@ ACGTACGT...
 | `--min-reads-sub` | 5 | 纯点突变 allele 最小 read 数阈值（inclusive，>=此值通过） |
 | `--min-reads-indel` | 0 | 含 indel 的 allele 最小 read 数阈值（0=不过滤） |
 | `--correct-bg-sub` | on | 启用背景点突变矫正 |
+| `--no-correct-bg-sub` | — | 关闭背景点突变矫正 |
 | `--keep-sub-indel-window` | 3 | 背景矫正时 indel 邻近保留窗口 (bp) |
+| `--read-to-allele` | off | 输出 read→allele 映射表到输出文件夹（仅 FASTQ 输入） |
 
 **报告选项：**
 
