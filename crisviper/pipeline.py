@@ -1,28 +1,30 @@
-"""crisviper/pipeline.py — 谱系示踪分析 管道编排模块
+"""crisviper/pipeline.py — Full analysis pipeline orchestration.
 
-将完整分析流程组织为可配置的 Pipeline，包含：
-  1. 数据转换（DataLoader）
-  2. 序列比对（Aligner）
-  3. 突变识别（MutationDetector）
-  4. Allele过滤（AlleleFilter）
-  5. 数据统计（StatsCollector）
-  6. 输出结果（ResultSaver）
+Organizes the complete lineage tracing analysis workflow into a
+configurable Pipeline class with the following steps:
+  1. Full-length global alignment (standard Gotoh or lineage-tracer)
+  2. Primer region quality check
+  3. Internal region extraction (trim primers)
+  4. Background substitution correction (before allele merging)
+  5. WT primer assembly for full-length output
+  6. Internal region re-scoring
+  7. Mutation extraction
+  8. Allele confidence filtering
 
-每个步骤可独立测试、替换、跳过。
+Each step is independently testable, replaceable, and skippable.
 """
 
 import os
-# 防止 fork + NumPy 线程冲突（在 import numpy 之前必须设置）
+# Prevent fork + NumPy thread conflicts (must set before importing numpy)
 os.environ.setdefault('OMP_NUM_THREADS', '1')
 os.environ.setdefault('MKL_NUM_THREADS', '1')
 os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
 
 import sys
-import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 from functools import partial
-from typing import List, Dict, Optional, Tuple, Callable
+from typing import List, Dict, Optional, Tuple
 
 from crisviper.logging_config import get_logger
 from crisviper.models import (
@@ -49,47 +51,9 @@ from crisviper.caller import call_alleles_coarse_grain, call_alleles_exact, Call
 log = get_logger(__name__)
 
 
-def _find_anchor_start(ar_bases: str, int_r: str, n_anchor: int = 20) -> int:
-    """在 ref 中查找比对 ref 碱基的最佳起始位置"""
-    if not ar_bases:
-        return 0
-    n_anchor = min(n_anchor, len(ar_bases))
-    anchor = ar_bases[:n_anchor]
-    best_pos, best_cnt = 0, -1
-    for i in range(len(int_r) - n_anchor + 1):
-        cnt = sum(1 for k in range(n_anchor) if int_r[i + k] == anchor[k])
-        if cnt > best_cnt:
-            best_cnt = cnt
-            best_pos = i
-    return best_pos
-
-
 # ═══════════════════════════════════════════════════════════════
-# 步骤1: 双端锚定（Primer检测）
+# Step 1: Primer quality check (post-alignment)
 # ═══════════════════════════════════════════════════════════════
-
-def check_primer_anchoring(
-    query_seq: str,
-    ref_seq: str,
-    primer5_len: int = 23,
-    primer3_len: int = 33,
-    primer5_threshold: int = 19,
-    primer3_threshold: int = 29,
-) -> Tuple[bool, int, int]:
-    """检查 query 是否能双端锚定到 ref (deprecated — 推荐使用 _check_primer_quality)
-
-    返回: (通过与否, p5匹配数, p3匹配数)
-    """
-    if len(query_seq) < primer5_len + primer3_len:
-        return False, 0, 0
-
-    p5_matches = sum(1 for a, b in zip(query_seq[:primer5_len], ref_seq[:primer5_len]) if a == b)
-    q3_check = query_seq[-primer3_len:] if len(query_seq) >= primer3_len else ""
-    p3_matches = sum(1 for a, b in zip(q3_check, ref_seq[-primer3_len:]) if a == b)
-
-    return (p5_matches >= primer5_threshold and p3_matches >= primer3_threshold,
-            p5_matches, p3_matches)
-
 
 def _check_primer_quality(
     ar: str,
@@ -100,25 +64,36 @@ def _check_primer_quality(
     p5_threshold: int,
     p3_threshold: int,
 ) -> Tuple[bool, int, bool, int]:
-    """从全长比对结果中检查引物区比对质量
+    """Check primer region alignment quality from the full-length global alignment.
 
-    在全局比对完成后调用，检查 aligned query 在引物区域的匹配度。
-    取代 check_primer_anchoring 的先验检查。
+    Called after global alignment to evaluate whether the query sequence
+    matches the primer regions well enough. Replaces the older
+    check_primer_anchoring pre-filter approach.
 
-    返回: (p5通过, p5匹配数, p3通过, p3匹配数)
+    Args:
+        ar: Aligned reference sequence (with gaps).
+        aq: Aligned query sequence (with gaps).
+        ref_seq: Original (ungapped) reference sequence.
+        p5: 5' primer length in bp.
+        p3: 3' primer length in bp.
+        p5_threshold: Minimum required matches for the 5' primer.
+        p3_threshold: Minimum required matches for the 3' primer.
+
+    Returns:
+        Tuple of (p5_passed, p5_match_count, p3_passed, p3_match_count).
     """
     pos_map, total = _build_ref_pos_map_full(ar)
     if total < p5 + p3:
         return False, 0, False, 0
 
-    # 5' 引物区: ref 位置 0..p5-1
+    # 5' primer region: ref positions 0..p5-1
     p5_end = next((i for i, p in enumerate(pos_map) if p == p5 - 1), None)
     if p5_end is None:
         return False, 0, False, 0
     p5_match = sum(1 for i in range(p5_end + 1)
                    if ar[i] != '-' and aq[i] != '-' and ar[i] == aq[i])
 
-    # 3' 引物区: ref 位置 total-p3..total-1
+    # 3' primer region: ref positions total-p3..total-1
     p3_start = next((i for i, p in enumerate(pos_map) if p == total - p3), None)
     if p3_start is None:
         return False, p5_match, False, 0
@@ -135,9 +110,22 @@ def _extract_internal_region(
     p5: int,
     p3: int,
 ) -> Tuple[Optional[str], Optional[str], str]:
-    """从全长比对中提取引物之间的内部区域
+    """Extract the primer-trimmed internal region from a full-length alignment.
 
-    返回: (aligned_internal_ref, aligned_internal_query, ungapped_internal_ref)
+    Removes the 5' and 3' primer columns from the aligned sequences,
+    returning only the internal (target-containing) region for downstream
+    mutation analysis.
+
+    Args:
+        ar: Aligned reference sequence (full-length, with gaps).
+        aq: Aligned query sequence (full-length, with gaps).
+        r_seq: Original (ungapped) reference sequence.
+        p5: 5' primer length in bp.
+        p3: 3' primer length in bp.
+
+    Returns:
+        Tuple of (aligned_internal_ref, aligned_internal_query, ungapped_internal_ref).
+        Returns (None, None, "") if the internal region cannot be extracted.
     """
     pos_map, total = _build_ref_pos_map_full(ar)
 
@@ -154,7 +142,7 @@ def _extract_internal_region(
 
 
 # ═══════════════════════════════════════════════════════════════
-# 步骤2: Allele置信度过滤
+# Step 2: Allele confidence filtering
 # ═══════════════════════════════════════════════════════════════
 
 def check_allele_confidence(
@@ -163,28 +151,35 @@ def check_allele_confidence(
     min_reads_sub: int = 5,
     min_reads_indel: int = 0,
 ) -> Tuple[bool, str]:
-    """检查Allele置信度
+    """Check whether an allele passes confidence filtering thresholds.
 
-    规则:
-      - 仅点突变（无indel）需 readCount > min_reads_sub
-      - 有indel的需 readCount > min_reads_indel
-      - 无突变的野生型直接通过
+    Rules:
+      - Substitution-only (no indel): requires readCount >= min_reads_sub.
+      - Indel-containing: requires readCount >= min_reads_indel.
+      - Wild-type (no mutations): passes automatically.
 
-    返回: (通过与否, 原因)
+    Args:
+        stats: Alignment statistics for this allele.
+        read_count: Read count supporting this allele.
+        min_reads_sub: Minimum read count for pure-substitution alleles (inclusive).
+        min_reads_indel: Minimum read count for indel-containing alleles (inclusive).
+
+    Returns:
+        Tuple of (passed: bool, reason: str). Empty reason means passed.
     """
     if not stats.has_indel and stats.mismatches > 0:
-        # 仅点突变
-        if read_count <= min_reads_sub:
-            return False, f"假阳性: 仅点突变但readCount不足({read_count}<={min_reads_sub})"
+        # Substitution-only: must reach threshold
+        if read_count < min_reads_sub:
+            return False, f"False positive: substitution-only with insufficient reads ({read_count}<{min_reads_sub})"
     elif stats.has_indel:
-        # 有indel
-        if read_count <= min_reads_indel:
-            return False, f"假阳性: 有indel但readCount不足({read_count}<={min_reads_indel})"
+        # Indel-containing: must reach threshold
+        if read_count < min_reads_indel:
+            return False, f"False positive: indel with insufficient reads ({read_count}<{min_reads_indel})"
     return True, ""
 
 
 # ═══════════════════════════════════════════════════════════════
-# 步骤3: 背景点突变矫正
+# Step 3: Background substitution correction
 # ═══════════════════════════════════════════════════════════════
 
 def correct_background_substitutions(
@@ -195,32 +190,34 @@ def correct_background_substitutions(
     keep_sub_indel_window: int = 3,
     lineage_mode: bool = True,
 ) -> str:
-    """校正背景点突变：将cutsite窗口和indel邻近区外的substitution改回reference
+    """Correct background sequencing errors by reverting out-of-context substitutions.
 
-    在合并allele之前调用，消除测序背景点突变导致的等位基因碎片化。
+    Called before allele merging to eliminate allele fragmentation caused
+    by sequencing errors that appear as isolated point mutations outside
+    expected cut sites.
 
-    保留规则（满足任一即保留）：
-      1. 谱系模式：cutsite ± sub_window 内的 substitution
-      2. 标准模式：cutsite 自身范围内的 substitution
-      3. 任意模式：indel 任一端点 ± keep_sub_indel_window 内的 substitution
+    A substitution is kept (not reverted) if it falls within:
+      1. Lineage mode: cutsite center ± sub_window
+      2. Standard mode: the cutsite region itself
+      3. Any mode: within keep_sub_indel_window of an indel endpoint
 
     Args:
-        ar_int: 内部区域比对的参考序列（含gap）
-        aq_int: 内部区域比对的查询序列（含gap）
-        cutsites: cutsite区域列表（已转换到内部区域坐标）
-        sub_window: cutsite邻近保留窗口(bp)
-        keep_sub_indel_window: indel邻近保留窗口(bp)
-        lineage_mode: 是否谱系示踪模式
+        ar_int: Internal-region aligned reference (with gaps).
+        aq_int: Internal-region aligned query (with gaps), modified in-place.
+        cutsites: Cutsite regions (already adjusted to internal coordinates).
+        sub_window: Cutsite-adjacent retention window (bp).
+        keep_sub_indel_window: Indel-adjacent retention window (bp).
+        lineage_mode: Whether lineage-tracer mode is active.
 
     Returns:
-        矫正后的 aq_int
+        Corrected aq_int string with background substitutions reverted to reference.
     """
     if cutsites is None or not ar_int or len(ar_int) != len(aq_int):
         return aq_int
 
     pos_map, total = _build_ref_pos_map_full(ar_int)
 
-    # Step 1: 收集 indel 涉及的 ref 坐标区间（扩展 flank）
+    # Step 1: Collect indel-affected ref coordinate intervals (with flank extension)
     indel_keep_regions = []
     i = 0
     alen = len(ar_int)
@@ -245,10 +242,10 @@ def correct_background_substitutions(
         else:
             i += 1
 
-    # Step 2: 构建保留区域集合（区间合并）
+    # Step 2: Build retention region set (merged intervals)
     keep_intervals = []  # (start, end) inclusive
 
-    # 2a: cutsite 区域
+    # 2a: Cutsite regions
     for cs in cutsites:
         if lineage_mode:
             ks = max(0, cs.start - sub_window)
@@ -258,13 +255,13 @@ def correct_background_substitutions(
             ke = min(total - 1, cs.end)
         keep_intervals.append((ks, ke))
 
-    # 2b: indel flanking
+    # 2b: Indel flanking regions
     keep_intervals.extend(indel_keep_regions)
 
     if not keep_intervals:
         return aq_int
 
-    # 合并重叠区间
+    # Merge overlapping intervals
     keep_intervals.sort()
     merged = [keep_intervals[0]]
     for s, e in keep_intervals[1:]:
@@ -273,7 +270,7 @@ def correct_background_substitutions(
         else:
             merged.append((s, e))
 
-    # Step 3: 遍历 substitution 列，判断是否保留
+    # Step 3: Scan substitution columns and revert those outside retention intervals
     aq_list = list(aq_int)
     for i in range(alen):
         if ar_int[i] != '-' and aq_int[i] != '-' and ar_int[i] != aq_int[i]:
@@ -292,7 +289,7 @@ def correct_background_substitutions(
 
 
 # ═══════════════════════════════════════════════════════════════
-# 步骤4: 单序列比对（完整的 align_single 逻辑）
+# Step 4: Single-sequence alignment pipeline
 # ═══════════════════════════════════════════════════════════════
 
 
@@ -302,17 +299,26 @@ def align_single(
     config: PipelineConfig,
     cutsites: Optional[List[CutsiteRegion]] = None,
 ) -> AlignmentResult:
-    """单条序列的完整比对管道
+    """Run the complete per-sequence alignment pipeline.
 
-    管道步骤:
-      1. 全长全局比对（ref 332bp vs query）
-      2. 引物区比对质量检查（取代双端锚定先验检查）
-      3. 内部区域提取（trim 掉引物列）
-      4. 背景点突变矫正（合并allele前，消除测序背景）
-      5. 使用 WT 引物组装全长输出
-      6. 内部区域重计分
-      7. 突变识别
-      8. Allele置信度过滤
+    Pipeline steps:
+      1. Full-length global alignment (standard Gotoh or lineage-tracer mode)
+      2. Primer region quality check (replaces older pre-filter approach)
+      3. Internal region extraction (trim primer columns)
+      4. Background substitution correction (eliminate sequencing noise)
+      5. WT primer assembly for full-length output
+      6. Internal region re-scoring
+      7. Mutation extraction
+      8. Allele confidence filtering
+
+    Args:
+        query: The query sequence record.
+        ref_seq: Full reference sequence.
+        config: Pipeline configuration.
+        cutsites: Cutsite regions (optional, required for gradient mode).
+
+    Returns:
+        AlignmentResult with success/failure status and all extracted data.
     """
     query_seq = query.seq
     q_seq = query_seq
@@ -320,7 +326,7 @@ def align_single(
     p5 = config.primer5_len
     p3 = config.primer3_len
 
-    # ── 步骤1: 全长全局比对 ──
+    # ── Step 1: Full-length global alignment ──
     if config.lineage_mode and cutsites:
         score, ar, aq, raw_stats = _align_full_lineage(
             r_seq, q_seq, cutsites, config,
@@ -331,9 +337,9 @@ def align_single(
         )
 
     if not ar:
-        return AlignmentResult.error_result(query, "全序列比对失败")
+        return AlignmentResult.error_result(query, "Full-length alignment failed", category="alignment")
 
-    # ── 步骤2: 引物区比对质量检查（从比对结果判断）──
+    # ── Step 2: Primer region alignment quality check (post-alignment) ──
     p5_ok, p5_match, p3_ok, p3_match = _check_primer_quality(
         ar, aq, r_seq, p5, p3,
         config.primer5_threshold, config.primer3_threshold,
@@ -343,16 +349,17 @@ def align_single(
         n3 = config.primer3_threshold
         return AlignmentResult.error_result(
             query,
-            f"引物比对质量不足: Primer5({p5_match}/{p5}<{n5}) "
+            f"Primer anchoring failed: Primer5({p5_match}/{p5}<{n5}) "
             f"Primer3({p3_match}/{p3}<{n3})",
+            category="anchor",
         )
 
-    # ── 步骤3: 提取内部区域 ──
+    # ── Step 3: Extract internal (primer-trimmed) region ──
     ar_int, aq_int, int_r = _extract_internal_region(ar, aq, r_seq, p5, p3)
     if ar_int is None:
-        return AlignmentResult.error_result(query, "无法从全长比对中提取内部区域")
+        return AlignmentResult.error_result(query, "Failed to extract internal region from full-length alignment", category="extraction")
 
-    # ── 步骤4: 背景点突变矫正（合并allele前） ──
+    # ── Step 4: Background substitution correction (pre-allele-merging) ──
     if config.correct_bg_sub and cutsites is not None:
         int_r_len = len(r_seq) - p5 - p3
         internal_cutsites = _adjust_cutsites_to_internal(cutsites, p5, int_r_len)
@@ -364,12 +371,15 @@ def align_single(
             lineage_mode=config.lineage_mode,
         )
 
-    # ── 步骤5: WT 引物组装 ──
+    # ── Step 4b: Merge DEL→INS→DEL artifact patterns ──
+    ar_int, aq_int = _merge_del_ins_del(ar_int, aq_int)
+
+    # ── Step 5: WT primer assembly for full-length output ──
     aligned_ref, aligned_query = _assemble_full_length(
         ar_int, aq_int, r_seq, p5, p3,
     )
 
-    # ── 步骤6: 内部区域重计分 ──
+    # ── Step 6: Internal region re-scoring ──
     stats_dict = calculate_alignment_stats(ar_int, aq_int)
     score = (stats_dict['matches'] * 2 +
              stats_dict['mismatches'] * (-3) +
@@ -378,7 +388,7 @@ def align_single(
     stats_dict['score'] = score
     stats = AlignmentStats.from_dict(stats_dict)
 
-    # ── 步骤7: 突变识别（仅内部区域）──
+    # ── Step 7: Mutation extraction (internal region only) ──
     if cutsites is not None:
         int_r_len = len(r_seq) - p5 - p3
         internal_cutsites = _adjust_cutsites_to_internal(cutsites, p5, int_r_len)
@@ -390,18 +400,18 @@ def align_single(
         sub_window=config.sub_window,
     )
 
-    # 转换 ref_pos 从内部坐标 → 全长参考坐标
+    # Convert ref_pos from internal coordinates back to full-length reference coordinates
     for m in mutations:
         m.ref_pos += config.primer5_len
 
-    # ── 步骤8: Allele置信度过滤 ──
+    # ── Step 8: Allele confidence filtering ──
     passed, reason = check_allele_confidence(
         stats, query.readCount,
         min_reads_sub=config.min_reads_sub,
         min_reads_indel=config.min_reads_indel,
     )
     if not passed:
-        return AlignmentResult.error_result(query, reason)
+        return AlignmentResult.error_result(query, reason, category="noise")
 
     return AlignmentResult(
         query=query,
@@ -416,7 +426,7 @@ def align_single(
 
 
 # ═══════════════════════════════════════════════════════════════
-# 谱系示踪比对模式
+# Lineage tracer alignment mode
 # ═══════════════════════════════════════════════════════════════
 
 def _align_full_lineage(
@@ -425,10 +435,12 @@ def _align_full_lineage(
     cutsites: List[CutsiteRegion],
     config: PipelineConfig,
 ) -> Tuple[float, str, str, Dict]:
-    """全长谱系示踪比对 ref vs query（332bp 全局对齐）
+    """Full-length lineage-tracer alignment of ref vs query (332bp global alignment).
 
-    直接调用 lineage_tracer_align 做全长比对，cutsite 已在全长坐标中。
-    无需 CGCCG 前缀特殊处理 — DP 在 332bp 上下文中自然处理。
+    Delegates to lineage_tracer_align for the full-length alignment.
+    Cutsite coordinates are in full-length reference coordinates.
+    No special CGCCG prefix handling is needed — the DP naturally handles
+    context in the 332bp alignment window.
     """
     if not q_seq:
         return 0.0, "", "", {"matches": 0, "mismatches": 0, "gaps_in_ref": 0,
@@ -462,7 +474,7 @@ def _align_full_lineage(
 
 
 # ═══════════════════════════════════════════════════════════════
-# 标准 Gotoh 比对模式
+# Standard Gotoh alignment mode
 # ═══════════════════════════════════════════════════════════════
 
 def _align_full_standard(
@@ -471,10 +483,11 @@ def _align_full_standard(
     config: PipelineConfig,
     cutsites: Optional[List[CutsiteRegion]] = None,
 ) -> Tuple[float, str, str, Dict]:
-    """全长标准 Gotoh 比对 ref vs query
+    """Full-length standard Gotoh alignment of ref vs query.
 
-    当 cutsites 可用且 config.gradient_mode 启用时，使用平滑梯度
-    位置感知的 gap/mismatch 惩罚；否则使用全局固定惩罚。
+    When cutsites are available and config.gradient_mode is enabled,
+    uses smoothstep position-aware gap/mismatch penalties; otherwise
+    uses global fixed penalties.
     """
     if not q_seq:
         return 0.0, "", "", {"matches": 0, "mismatches": 0, "gaps_in_ref": 0,
@@ -519,12 +532,93 @@ def _align_full_standard(
             gap_exit_bonus=config.gap_exit_strength,
             short_match_window=config.short_match_window,
             short_match_discount=config.short_match_discount,
+            isolated_base_penalty=config.isolated_base_penalty,
         )
     return score, ar, aq, raw_stats
 
 
 # ═══════════════════════════════════════════════════════════════
-# 全长比对组装
+# DEL→INS→DEL artifact correction
+# ═══════════════════════════════════════════════════════════════
+
+def _merge_del_ins_del(ar_int: str, aq_int: str) -> Tuple[str, str]:
+    """Merge DEL→INS→DEL artifact patterns in aligned strings.
+
+    The position-dependent gradient DP can split a single INDEL event into
+    DEL→INS→DEL when gap costs differ sharply across the cutsite boundary.
+    This detects such patterns and re-arranges to contiguous DEL followed
+    by INS, matching the biological reality of NHEJ repair.
+
+    Args:
+        ar_int: Internal-region aligned reference (may contain gaps).
+        aq_int: Internal-region aligned query (may contain gaps).
+
+    Returns:
+        Corrected (ar_int, aq_int) — unchanged if no pattern found.
+    """
+    alen = len(ar_int)
+    if alen == 0 or len(ar_int) != len(aq_int):
+        return ar_int, aq_int
+
+    result_ar = list(ar_int)
+    result_aq = list(aq_int)
+    changed = False
+
+    i = 0
+    while i < alen:
+        # Block 1: deletion (ref base, query gap)
+        if ar_int[i] != '-' and aq_int[i] == '-':
+            b1_start = i
+            while i < alen and ar_int[i] != '-' and aq_int[i] == '-':
+                i += 1
+            b1_end = i
+            b1_len = b1_end - b1_start
+
+            # Block 2: insertion (ref gap, query base) — must immediately follow
+            if i < alen and ar_int[i] == '-' and aq_int[i] != '-':
+                b2_start = i
+                while i < alen and ar_int[i] == '-' and aq_int[i] != '-':
+                    i += 1
+                b2_end = i
+                b2_len = b2_end - b2_start
+
+                # Block 3: deletion (ref base, query gap) — must immediately follow
+                if i < alen and ar_int[i] != '-' and aq_int[i] == '-':
+                    b3_start = i
+                    while i < alen and ar_int[i] != '-' and aq_int[i] == '-':
+                        i += 1
+                    b3_end = i
+                    b3_len = b3_end - b3_start
+                    total_del = b1_len + b3_len
+
+                    # Extract bases to re-arrange
+                    ref_b1 = ar_int[b1_start:b1_end]
+                    ref_b3 = ar_int[b3_start:b3_end]
+                    q_b2 = aq_int[b2_start:b2_end]
+
+                    # Rearrange: [combined ref] + [insertion gaps in ref]
+                    #            [combined del gaps in query] + [insertion bases]
+                    new_ar_seg = ref_b1 + ref_b3 + '-' * b2_len
+                    new_aq_seg = '-' * total_del + q_b2
+
+                    seg_len = b1_len + b2_len + b3_len
+                    result_ar[b1_start:b3_end] = list(new_ar_seg)
+                    result_aq[b1_start:b3_end] = list(new_aq_seg)
+                    changed = True
+
+                    # Continue scanning after the merged region
+                    i = b3_end
+                    continue  # skip the else clause
+        else:
+            i += 1
+
+    if not changed:
+        return ar_int, aq_int
+    return ''.join(result_ar), ''.join(result_aq)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Full-length alignment assembly
 # ═══════════════════════════════════════════════════════════════
 
 def _assemble_full_length(
@@ -534,10 +628,11 @@ def _assemble_full_length(
     p5: int,
     p3: int,
 ) -> Tuple[str, str]:
-    """使用 WT 引物序列组装全长比对
+    """Assemble full-length alignment using wild-type primer sequences.
 
-    两端直接使用参考序列的引物（WT），避免 query 引物区突变
-    导致等位基因碎片化。
+    Replaces the query's primer regions with the reference (WT) primer
+    sequences to avoid allele fragmentation caused by primer-region
+    mutations in the query.
     """
     aligned_ref = r_seq[:p5] + ar_int + r_seq[-p3:]
     aligned_query = r_seq[:p5] + aq_int + r_seq[-p3:]
@@ -545,7 +640,7 @@ def _assemble_full_length(
 
 
 # ═══════════════════════════════════════════════════════════════
-# Cutsite坐标调整
+# Cutsite coordinate adjustment
 # ═══════════════════════════════════════════════════════════════
 
 def _adjust_cutsites_to_internal(
@@ -553,7 +648,7 @@ def _adjust_cutsites_to_internal(
     primer5_len: int,
     int_r_len: int,
 ) -> List[CutsiteRegion]:
-    """将cutsite坐标从全长转换到内部区域"""
+    """Convert cutsite coordinates from full-length to internal (primer-trimmed) coordinates."""
     result = []
     for cs in cutsites:
         ns = cs.start - primer5_len
@@ -570,7 +665,7 @@ def _adjust_cutsites_to_internal(
 
 
 # ═══════════════════════════════════════════════════════════════
-# 分块处理（用于并行）
+# Chunk processing (for parallel execution)
 # ═══════════════════════════════════════════════════════════════
 
 def _process_chunk(
@@ -579,7 +674,7 @@ def _process_chunk(
     config: PipelineConfig,
     cutsites: Optional[List[CutsiteRegion]] = None,
 ) -> List[AlignmentResult]:
-    """处理一批序列（供并行调用）"""
+    """Process a chunk of query sequences sequentially (for parallel executor pool calls)."""
     return [
         align_single(q, ref_seq, config, cutsites)
         for q in queries_chunk
@@ -587,23 +682,23 @@ def _process_chunk(
 
 
 # ═══════════════════════════════════════════════════════════════
-# Pipeline 主类
+# Pipeline main class
 # ═══════════════════════════════════════════════════════════════
 
 class Pipeline:
-    """谱系示踪分析管道
+    """Lineage tracing analysis pipeline orchestrator.
 
-    完整工作流:
-      1. 全长全局比对         (affine_gap_alignment / lineage_tracer_align)
-      2. 引物区比对质量检查     (_check_primer_quality)
-      3. 内部区域提取          (_extract_internal_region)
+    Full workflow:
+      1. Full-length global alignment        (affine_gap_alignment / lineage_tracer_align)
+      2. Primer region alignment quality     (_check_primer_quality)
+      3. Internal region extraction          (_extract_internal_region)
+      4. Background substitution correction  (correct_background_substitutions)
+      5. WT primer assembly                  (_assemble_full_length)
+      6. Internal region re-scoring          (calculate_alignment_stats)
+      7. Mutation extraction                 (extract_mutations)
+      8. Allele confidence filtering         (check_allele_confidence)
 
-      5. WT 引物组装          (_assemble_full_length)
-      6. 内部区域重计分         (calculate_alignment_stats)
-      7. 突变识别             (extract_mutations)
-      8. Allele置信度过滤      (check_allele_confidence)
-
-    每一步都可以独立测试和替换。
+    Each step is independently testable and replaceable.
     """
 
     def __init__(
@@ -616,13 +711,25 @@ class Pipeline:
         self.cutsites: Optional[List[CutsiteRegion]] = None
 
     def load_cutsites(self, ref_seq: Optional[str] = None) -> None:
-        """加载/检测cutsite位置"""
+        """Load or auto-detect cutsite positions.
+
+        Priority (highest to lowest):
+        1. explicit_cutsites — explicit cutsite list from YAML config
+        2. cutsites_path — JSON file with cutsite definitions
+        3. auto_detect — auto-detection using amplicon_config (if available)
+        """
         seq = ref_seq or self.ref_seq
         if not seq:
             return
 
+        # Priority 1: Explicit cutsites from YAML configuration
+        if self.config.explicit_cutsites:
+            self.cutsites = self.config.explicit_cutsites
+            log.info("Loaded %d cutsite regions from YAML config", len(self.cutsites))
+            return
+
         if self.config.cutsites_path:
-            # 从JSON文件加载
+            # Load from JSON file
             import json
             try:
                 with open(self.config.cutsites_path) as f:
@@ -633,38 +740,40 @@ class Pipeline:
                                   start=c["start"], end=c["end"])
                     for i, c in enumerate(raw)
                 ]
-                log.info("从配置文件加载 %d 个cutsite区域", len(self.cutsites))
+                log.info("Loaded %d cutsite regions from config file", len(self.cutsites))
             except Exception as e:
-                log.error("读取cutsite配置文件失败 - %s", e)
+                log.error("Failed to read cutsite config file - %s", e)
                 sys.exit(1)
         elif self.config.auto_detect_cutsites:
-            self.cutsites = get_amplicon_structure(seq)
+            self.cutsites = get_amplicon_structure(seq, config=self.config.amplicon_config)
             if self.cutsites:
-                log.info("自动检测到 %d 个cutsite区域", len(self.cutsites))
+                log.info("Auto-detected %d cutsite regions", len(self.cutsites))
             else:
-                log.warning("无法自动推断cutsite位置")
+                log.warning("Could not auto-detect cutsite positions")
 
     def run(
         self,
         queries: List[QueryRecord],
         ref_seq: Optional[str] = None,
     ) -> PipelineResult:
-        """运行完整分析管道
+        """Run the complete analysis pipeline on all query sequences.
 
-        参数:
-            queries: 查询序列列表（QueryRecord对象）
-            ref_seq: 参考序列（可覆盖构造函数中设置的）
+        Args:
+            queries: List of QueryRecord objects to align.
+            ref_seq: Reference sequence (overrides constructor value if set).
 
-        返回:
-            PipelineResult 包含所有比对结果和统计数据
+        Returns:
+            PipelineResult containing all alignment results and statistics.
         """
         if ref_seq:
             self.ref_seq = ref_seq
         if not self.ref_seq:
-            raise ValueError("参考序列未设置")
+            raise ValueError("Reference sequence not set")
 
-        # 自动加载cutsite
-        if self.config.lineage_mode and self.cutsites is None:
+        # Auto-load cutsites when lineage mode or gradient mode is enabled
+        # (standard mode with gradient_mode=True requires cutsites for
+        # position-aware penalty profiles)
+        if self.cutsites is None and (self.config.lineage_mode or self.config.gradient_mode):
             self.load_cutsites()
 
         total = len(queries)
@@ -675,23 +784,24 @@ class Pipeline:
                 ref_length=len(self.ref_seq),
             )
 
-        # ── 并行比对 ──
-        mode_label = "谱系示踪比对" if self.config.lineage_mode else "标准比对"
+        # ── Parallel alignment ──
+        mode_label = "lineage-tracer" if self.config.lineage_mode else "standard"
 
         threads = self.config.threads or 1
         threads = min(threads, total)
 
-        log.info("  使用 %d 个并行进程处理 %d 条序列 (%s)...",
-                 threads, total, mode_label)
+        log.info("  Processing %d sequences across %d parallel processes (%s mode)...",
+                 total, threads, mode_label)
 
-        # 批次划分
+        # Compute chunk size for batching
         chunk_size = self.config.chunk_size
         chunks = [queries[i:i + chunk_size] for i in range(0, total, chunk_size)]
-        log.info("  共 %d 个批次 (每批最多 %d 条)...", len(chunks), chunk_size)
+        log.info("  Split into %d chunks (max %d per chunk)", len(chunks), chunk_size)
 
-        # 并行执行
+        # Parallel execution with ProcessPoolExecutor
         results = []
 
+        processed_indices = set()
         if threads > 1:
             try:
                 with ProcessPoolExecutor(max_workers=threads) as executor:
@@ -701,43 +811,50 @@ class Pipeline:
                         config=self.config,
                         cutsites=self.cutsites,
                     )
-                    futures = {executor.submit(chunk_func, ch): ch for ch in chunks}
-                    for future in as_completed(futures):
+                    future_to_idx = {executor.submit(chunk_func, ch): i for i, ch in enumerate(chunks)}
+                    for future in as_completed(future_to_idx):
+                        idx = future_to_idx[future]
                         try:
                             results.extend(future.result())
+                            processed_indices.add(idx)
                         except Exception as e:
-                            log.error("  批次处理失败 (跳过): %s", e)
+                            log.error("  Chunk %d failed (skipping): %s", idx, e)
             except BrokenProcessPool:
-                log.warning("ProcessPoolExecutor 崩溃 (BrokenProcessPool)，回退到单线程处理")
-        if not results:
-            # ProcessPoolExecutor 失败或 threads <= 1
-            log.info("  使用单线程处理 %d 条序列...", total)
-            for chunk in chunks:
-                results.extend(_process_chunk(chunk, self.ref_seq, self.config, self.cutsites))
+                log.warning("ProcessPoolExecutor crashed (BrokenProcessPool), reprocessing remaining chunks")
 
-        # ── 等位基因调用（可选） ──
+        # Re-process remaining chunks after BrokenProcessPool (also handles threads <= 1)
+        remaining_indices = set(range(len(chunks))) - processed_indices
+        if remaining_indices:
+            if threads > 1 and processed_indices:
+                log.info("  Reprocessing %d remaining chunks...", len(remaining_indices))
+            else:
+                log.info("  Processing %d sequences in single-threaded mode...", total)
+            for i in remaining_indices:
+                results.extend(_process_chunk(chunks[i], self.ref_seq, self.config, self.cutsites))
+
+        # ── Allele calling (optional) ──
         called_alleles = []
         successful_results = [r for r in results if r.success]
         if self.config.call_alleles_enabled and successful_results:
             method = call_alleles_coarse_grain if self.config.call_alleles_mode == "coarse" else call_alleles_exact
             called_alleles = method(successful_results, dominant_frac=self.config.dominant_frac)
-            log.info("等位基因调用 (%s): %d 个等位基因",
+            log.info("Allele calling (%s): %d alleles identified",
                      self.config.call_alleles_mode, len(called_alleles))
 
-        # ── 构建统计数据 ──
+        # ── Build pipeline statistics ──
         return self._build_pipeline_result(results, called_alleles)
 
     def _build_pipeline_result(self, results: List[AlignmentResult],
                                called_alleles: list = None) -> PipelineResult:
-        """从比对结果构建管道统计"""
+        """Build pipeline statistics from alignment results."""
         stats = PipelineStats()
         stats.total_queries = len(results)
 
-        # 分类丢弃原因
-        n_anchor = sum(1 for r in results if not r.success and "锚定" in r.error)
-        n_noise = sum(1 for r in results if not r.success and "假阳性" in r.error)
+        # Categorize discard reasons using failure_category field
+        n_anchor = sum(1 for r in results if not r.success and r.failure_category == "anchor")
+        n_noise = sum(1 for r in results if not r.success and r.failure_category == "noise")
 
-        # 只保留成功结果
+        # Tally successful and failed
         successful = [r for r in results if r.success]
         failed = [r for r in results if not r.success]
         stats.successful = len(successful)
@@ -746,28 +863,28 @@ class Pipeline:
         stats.n_anchor_failed = n_anchor
         stats.n_noise_filtered = n_noise
 
-        # 突变计数
+        # Mutation counts
         mutated = [r for r in successful if r.stats and r.stats.has_mutation]
         unmutated = [r for r in successful if r.stats and not r.stats.has_mutation]
         stats.mutated_sequences = len(mutated)
         stats.unmutated_sequences = len(unmutated)
         stats.mutated_reads = sum(r.query.readCount for r in mutated)
 
-        # 突变汇总
+        # Build mutation summary
         summary = build_mutation_summary(successful)
 
-        # 日志
+        # Log discard reasons
         if stats.failed > 0:
             parts = []
             if n_anchor:
-                parts.append(f"引物锚定失败 {n_anchor}")
+                parts.append(f"primer anchoring failed {n_anchor}")
             if n_noise:
-                parts.append(f"假阳性allele {n_noise}")
+                parts.append(f"false positive allele {n_noise}")
             other = stats.failed - n_anchor - n_noise
             if other:
-                parts.append(f"其他 {other}")
-            log.warning("已丢弃 %d 条：%s", stats.failed, "，".join(parts))
-        log.info("批量比对完成: %d 条有效结果", stats.successful)
+                parts.append(f"other {other}")
+            log.warning("Discarded %d sequences: %s", stats.failed, ", ".join(parts))
+        log.info("Batch alignment complete: %d successful results", stats.successful)
 
         return PipelineResult(
             results=results,

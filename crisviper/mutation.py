@@ -1,7 +1,9 @@
-"""crisviper/mutation.py — 突变识别独立模块
+"""crisviper/mutation.py — Independent mutation extraction and classification module.
 
-从比对结果中显式提取结构化突变事件。
-这是管道的核心步骤——"突变识别"。
+Extracts structured mutation events from pairwise alignments produced by the
+alignment pipeline. This module is the core "mutation identification" step:
+it converts raw aligned sequences into typed, position-annotated mutation events
+(substitutions, deletions, insertions, and complex indels).
 """
 
 from typing import List, Optional, Tuple
@@ -10,11 +12,16 @@ from crisviper.config import CutsiteRegion
 
 
 def _build_ref_pos_map_full(aligned_ref: str):
-    """Build alignment-column → ref-position map (0-based ref coords).
+    """Build alignment-column-to-reference-position mapping.
 
-    Returns (pos_map, total) where:
-      - pos_map: list length=len(aligned_ref), -1 for gap columns
-      - total: number of non-gap ref bases
+    Maps each column in the gapped alignment to its corresponding 0-based
+    position on the ungapped reference sequence. Gap columns (dashes in the
+    reference sequence) map to -1.
+
+    Returns:
+        Tuple of (pos_map, total):
+        - pos_map: list of length len(aligned_ref), -1 for gap columns
+        - total: number of non-gap reference bases
     """
     pos_map = []
     cur = 0
@@ -176,22 +183,24 @@ def extract_mutations(
     cutsites: Optional[List[CutsiteRegion]] = None,
     sub_window: int = 3,
 ) -> List[MutationEvent]:
-    """从比对结果中提取所有突变事件
+    """Extract all mutation events from a pairwise alignment.
 
-    遍历比对（aligned_ref ↔ aligned_query），识别：
-      1. 替换（substitution）: 两列都有碱基但不同
-      2. 删除（deletion）: query 为 '-'，ref 有碱基
-      3. 插入（insertion）: ref 为 '-'，query 有碱基
-      4. 复合（complex）: 相邻的插入+删除合并为复合事件
+    Walks through the aligned reference and query sequences column by column
+    to identify four mutation types:
+      1. Substitution: both columns have bases but they differ
+      2. Deletion: query has a gap ('-'), reference has a base
+      3. Insertion: reference has a gap ('-'), query has a base
+      4. Complex (INDEL): adjacent insertion + deletion blocks are merged
+         into a single composite event via greedy grouping
 
-    参数:
-        aligned_ref: 比对后的参考序列（含 '-'）
-        aligned_query: 比对后的查询序列（含 '-'）
-        cutsites: cutsite区域列表（用于判断突变是否在窗口内）
-        sub_window: cutsite窗口半径（bp）
+    Args:
+        aligned_ref: Gapped reference sequence from alignment.
+        aligned_query: Gapped query sequence from alignment.
+        cutsites: List of cutsite regions for in-window annotation.
+        sub_window: Radius around cutsites for window annotation (bp).
 
-    返回:
-        MutationEvent 列表，按 ref 位置排序
+    Returns:
+        List of MutationEvent objects sorted by reference position.
     """
     if len(aligned_ref) != len(aligned_query) or len(aligned_ref) == 0:
         return []
@@ -200,14 +209,14 @@ def extract_mutations(
     i = 0
     alen = len(aligned_ref)
 
-    # 构建 ref 位置映射：aligned列 → ref序列上的坐标
+    # Build reference position map: alignment column → ref sequence coordinate
     ref_pos_map, _ = _build_ref_pos_map_full(aligned_ref)
 
     while i < alen:
         ar = aligned_ref[i]
         aq = aligned_query[i]
 
-        # ── 情况1: 替换（两列都有碱基但不相同）──
+        # ── Case 1: Substitution (both columns have bases, but they differ) ──
         if ar != '-' and aq != '-' and ar != aq:
             ref_pos = ref_pos_map[i]
             event = MutationEvent(
@@ -223,7 +232,7 @@ def extract_mutations(
             events.append(event)
             i += 1
 
-        # ── 情况2: 删除（query 为 '-'）──
+        # ── Case 2: Deletion (query has gap, reference has base) ──
         elif ar != '-' and aq == '-':
             ref_start = ref_pos_map[i]
             j = i
@@ -246,19 +255,15 @@ def extract_mutations(
             events.append(event)
             i = j
 
-        # ── 情况3: 插入（ref 为 '-'）──
+        # ── Case 3: Insertion (reference has gap, query has base) ──
         elif ar == '-' and aq != '-':
-            ref_pos = ref_pos_map[i] if i > 0 else 0
-            # 如果是首列没有 ref_pos_map，用第一个非gap的位置
-            if ref_pos < 0:
-                for k in range(i, alen):
-                    p = ref_pos_map[k]
-                    if p >= 0:
-                        ref_pos = p
-                        break
-                    elif k < alen - 1 and ref_pos_map[k + 1] >= 0:
-                        ref_pos = ref_pos_map[k + 1]
-                        break
+            # Insertion position: use the ref base immediately before the
+            # insertion gap (i > 0 → ref_pos_map[i-1] is always >= 0 since
+            # this is the first column of a new insertion block).
+            if i > 0:
+                ref_pos = max(0, ref_pos_map[i - 1])
+            else:
+                ref_pos = 0
             j = i
             while j < alen and aligned_ref[j] == '-' and aligned_query[j] != '-':
                 j += 1
@@ -278,10 +283,10 @@ def extract_mutations(
             i = j
 
         else:
-            # 匹配列，跳过
+            # Matching column — skip
             i += 1
 
-    # 合并相邻的插入+删除为复合事件
+    # Merge adjacent insertion+deletion blocks into composite INDEL events
     events = _merge_adjacent_indels(events)
 
     return events
@@ -292,9 +297,19 @@ def _in_any_cutsite_window(
     cutsites: List[CutsiteRegion],
     window: int = 3,
 ) -> bool:
-    """判断一个参考序列坐标是否在任何cutsite的窗口内"""
+    """Check whether a reference position falls within any cutsite's extended window.
+
+    Args:
+        ref_pos: 0-based reference position to check.
+        cutsites: List of cutsite regions.
+        window: Radius to extend beyond each cutsite boundary (bp).
+
+    Returns:
+        True if ref_pos is within any cutsite region ± window.
+        When cutsites list is empty, returns True (all positions treated as in-window).
+    """
     if not cutsites:
-        return True  # 没有cutsite定义时视为全在窗口内
+        return True  # No cutsites defined → treat all positions as in-window
     for cs in cutsites:
         if cs.start - window <= ref_pos <= cs.end + window:
             return True
@@ -342,7 +357,7 @@ def _merge_adjacent_indels(events: List[MutationEvent]) -> List[MutationEvent]:
             for e in group
         )
 
-        if has_indel:
+        if has_indel and len(group) > 1:
             ref_start = min(e.ref_pos for e in group)
             ref_end = max(exclusive_end(e) for e in group)
             length = ref_end - ref_start
@@ -358,6 +373,9 @@ def _merge_adjacent_indels(events: List[MutationEvent]) -> List[MutationEvent]:
                 raw_ref_segment=all_ref,
                 raw_query_segment=all_query,
             ))
+        elif has_indel:
+            # Single insertion or deletion — keep original type
+            merged.append(group[0])
         else:
             merged.extend(group)
 
@@ -369,9 +387,18 @@ def _merge_adjacent_indels(events: List[MutationEvent]) -> List[MutationEvent]:
 def classify_mutation_type(
     stats: AlignmentStats,
 ) -> str:
-    """根据比对统计信息分类突变类型（用于报告）
+    """Classify the mutation type of an alignment based on its statistics.
 
-    返回字符串标签如: "only_substitution", "insertion_and_deletion" 等
+    Uses the presence/absence of insertions (gaps_in_ref), deletions
+    (gaps_in_query), and substitutions (mismatches) to produce a category
+    label for reporting purposes.
+
+    Returns:
+        String label such as "only_substitution", "insertion_and_deletion",
+        "unmutated", etc. Full list:
+        - only_insertion / only_deletion / only_substitution
+        - insertion_and_deletion / insertion_and_substitution / deletion_and_substitution
+        - insertion_deletion_substitution / unmutated
     """
     has_ins = stats.gaps_in_ref > 0
     has_del = stats.gaps_in_query > 0
@@ -397,10 +424,18 @@ def classify_mutation_type(
 def build_mutation_summary(
     results: List['AlignmentResult'],
 ) -> dict:
-    """构建突变类型汇总统计
+    """Build aggregate mutation type summary across all alignment results.
 
-    统计各类突变的数量（序列数 + Reads数），
-    以及 indel 长度分布和点突变总数。
+    Counts sequences and reads per mutation category (using classify_mutation_type),
+    collects indel length distributions from gap block statistics, and
+    sums total point mutations (mismatches).
+
+    Returns:
+        dict with keys:
+        - type_counts: dict of {mutation_label: {"sequences": N, "reads": N}}
+        - ins_lengths: list of insertion lengths (bp), one per gap block in ref
+        - del_lengths: list of deletion lengths (bp), one per gap block in query
+        - total_mismatches: sum of all mismatches across successful alignments
     """
     from collections import defaultdict
 
@@ -417,7 +452,7 @@ def build_mutation_summary(
         type_counts[mtype]["sequences"] += 1
         type_counts[mtype]["reads"] += rc
 
-        # indel 长度收集
+        # Collect indel lengths for distribution analysis
         for block in r.stats.gap_blocks_ref:
             ins_lengths.append(block)
         for block in r.stats.gap_blocks_query:
@@ -432,28 +467,3 @@ def build_mutation_summary(
     }
 
 
-def format_mutations_for_display(
-    mutations: List[MutationEvent],
-    max_events: int = 20,
-) -> str:
-    """将突变事件列表格式化为可读字符串（用于调试/日志）"""
-    if not mutations:
-        return "未检测到突变"
-
-    lines = []
-    for i, m in enumerate(mutations[:max_events]):
-        pos_info = f"@pos{m.ref_pos}" if m.ref_pos >= 0 else ""
-        cut_info = " [窗口内]" if m.in_cutsite_window else " [窗口外]"
-        if m.type == MutationType.SUBSTITUTION:
-            lines.append(f"  {i+1}. 替换 {pos_info}: {m.ref_base}→{m.query_base}{cut_info}")
-        elif m.type == MutationType.DELETION:
-            lines.append(f"  {i+1}. 删除 {pos_info}: -{m.length}bp ({m.ref_base}){cut_info}")
-        elif m.type == MutationType.INSERTION:
-            lines.append(f"  {i+1}. 插入 {pos_info}: +{m.length}bp ({m.query_base}){cut_info}")
-        elif m.type == MutationType.INDEL:
-            lines.append(f"  {i+1}. 复合 {pos_info}: {m.length}bp{cut_info}")
-
-    if len(mutations) > max_events:
-        lines.append(f"  ... 还有 {len(mutations) - max_events} 个事件未显示")
-
-    return "\n".join(lines)

@@ -134,9 +134,9 @@ def make_result(
     success: bool = True,
 ) -> AlignmentResult:
     stats = AlignmentStats(
-        matches=aligned_ref.count("-"),
+        matches=sum(1 for a, b in zip(aligned_ref, aligned_query) if a == b and a != '-'),
         mismatches=0,
-        gaps_in_ref=aligned_ref.count("-") - aligned_query.count("-"),
+        gaps_in_ref=aligned_ref.count("-"),
         gaps_in_query=aligned_query.count("-"),
     )
     return AlignmentResult(

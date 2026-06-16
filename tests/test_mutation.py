@@ -13,25 +13,25 @@ from crisviper import (
 
 
 class TestExtractMutations:
-    """extract_mutations — 从比对结果中提取突变事件"""
+    """extract_mutations — Extract mutation events from alignment results"""
 
     def test_identical_sequences(self):
-        """完全相同 → 无突变"""
+        """Identical sequences → no mutations"""
         ar = "ACGTACGT"
         aq = "ACGTACGT"
         mutations = extract_mutations(ar, aq)
         assert len(mutations) == 0
 
     def test_empty_input(self):
-        """空比对 → 空列表"""
+        """Empty alignment → empty list"""
         assert extract_mutations("", "") == []
 
     def test_mismatched_lengths(self):
-        """长度不同 → 空列表"""
+        """Mismatched lengths → empty list"""
         assert extract_mutations("ACGT", "AC") == []
 
     def test_single_substitution(self):
-        """单个点突变"""
+        """Single point mutation"""
         ar = "ACGT"
         aq = "ACCT"  # G→C at position 2
         mutations = extract_mutations(ar, aq)
@@ -44,7 +44,7 @@ class TestExtractMutations:
         assert m.length == 1
 
     def test_two_substitutions(self):
-        """两个独立的点突变"""
+        """Two independent point mutations"""
         ar = "ACGTACGT"
         aq = "ACCTACAT"  # G→C at pos2, G→A at pos6
         mutations = extract_mutations(ar, aq)
@@ -55,7 +55,7 @@ class TestExtractMutations:
         assert mutations[1].ref_pos == 6
 
     def test_single_deletion(self):
-        """单个删除（1bp）"""
+        """Single deletion (1bp)"""
         ar = "ACGT"
         aq = "A-GT"  # C deleted
         mutations = extract_mutations(ar, aq)
@@ -66,7 +66,7 @@ class TestExtractMutations:
         assert m.ref_base == "C"
 
     def test_multi_base_deletion(self):
-        """多碱基删除"""
+        """Multi-base deletion"""
         ar = "ACGTACG"
         aq = "A-----G"  # CGTAC deleted (5bp)
         mutations = extract_mutations(ar, aq)
@@ -76,7 +76,7 @@ class TestExtractMutations:
         assert m.length == 5
 
     def test_single_insertion(self):
-        """单个插入（1bp）"""
+        """Single insertion (1bp)"""
         ar = "ACGT"
         aq = "ACGGT"  # G inserted between C and G
         # alignment: ref=AC-T, query=ACGT → wait, this is wrong
@@ -91,7 +91,7 @@ class TestExtractMutations:
         assert has_ins
 
     def test_missing_primer5_region_no_mutation(self):
-        """Primer5区域匹配不应被检测为突变"""
+        """Primer5 region matches should not be detected as mutations"""
         # Simulating full-length alignment where primer regions are identical
         # and mutation is in internal region
         ar = "TATGTGTGGGAGGGCTAAGAGG" + "ACGTACGT" + "TAGTTGCCAGCCATCTGTTGT"
@@ -102,7 +102,7 @@ class TestExtractMutations:
         assert mutations[0].type == MutationType.SUBSTITUTION
 
     def test_cutsite_window_detection(self):
-        """突变在cutsite窗口内时 in_cutsite_window=True"""
+        """Mutation inside cutsite window → in_cutsite_window=True"""
         ar = "ACGTACGTACGT"
         aq = "ACGTACGAACGT"  # T→A at pos 7
         cutsites = [CutsiteRegion("T1", 5, 10)]
@@ -113,7 +113,7 @@ class TestExtractMutations:
                 assert m.in_cutsite_window
 
     def test_outside_cutsite_window(self):
-        """突变在cutsite窗口外时 in_cutsite_window=False"""
+        """Mutation outside cutsite window → in_cutsite_window=False"""
         ar = "ACGTACGTACGT"
         aq = "ACGTACGAACGT"  # T→A at pos 7
         cutsites = [CutsiteRegion("T1", 1, 3)]
@@ -124,7 +124,7 @@ class TestExtractMutations:
                 assert not m.in_cutsite_window
 
     def test_complex_indel_adjacent(self):
-        """相邻的插入+删除被合并为复合事件"""
+        """Adjacent insertion + deletion merged into a complex event"""
         # This is an edge case that may or may not merge
         # Test that complex events can form
         ar = "ACGT--AC"
@@ -137,7 +137,7 @@ class TestExtractMutations:
         assert MutationType.DELETION in types or MutationType.INDEL in types
 
     def test_ref_pos_mapping(self):
-        """ref_pos 正确指向参考序列坐标"""
+        """ref_pos correctly points to reference sequence coordinates"""
         # With gaps in the alignment:
         # Ref:  A C G T A C G T
         # Query:A C - T A C G T
@@ -167,16 +167,27 @@ class TestGreedyIndelMerge:
         assert mutations[0].type == MutationType.INDEL
 
     def test_separate_del_and_ins_not_merged(self):
-        """Non-adjacent deletion and insertion remain as separate INDEL events"""
+        """Non-adjacent deletion and insertion remain as separate events"""
         # Ref:  A C G T A C - - T
         # Query: A C - - A C G G T
-        # DEL(2,2) at ref_pos=2, INS(6,2) at ref_pos=6
-        # >1bp apart, so not merged — but each converted to INDEL individually
+        # DEL(2,2) at ref_pos=2, INS(5,2) at ref_pos=5
+        # These are 1bp apart (ref pos 4 between them) → adjacent, merged into single INDEL
         ar = "ACGTAC--T"
         aq = "AC--ACGGT"
         mutations = extract_mutations(ar, aq)
+        assert len(mutations) == 1
+        assert mutations[0].type == MutationType.INDEL
+
+    def test_separate_del_and_ins_2bp_apart_not_merged(self):
+        """Deletion and insertion separated by 2bp remain as separate events"""
+        # Ref:  A C G T A G C T - - A
+        # Query: A C - - A G C T X Y A
+        # DEL(2,2) at ref_pos=2, INS(8,2) at ref_pos=8
+        # Positions 2-3 (DEL), 4-7 (match), 8 (INS) → 4bp gap → not adjacent
+        ar = "ACGTAGCT--A"
+        aq = "AC--AGCTXYA"
+        mutations = extract_mutations(ar, aq)
         assert len(mutations) == 2
-        assert all(m.type == MutationType.INDEL for m in mutations)
 
     def test_multi_event_group_merged(self):
         """DEL + INS + SUB in one adjacent group merge into single INDEL"""
@@ -208,7 +219,7 @@ class TestGreedyIndelMerge:
 
 
 class TestClassifyMutationType:
-    """classify_mutation_type — 根据统计分类突变类型"""
+    """classify_mutation_type — Classify mutation type based on statistics"""
 
     def test_unmutated(self):
         stats = AlignmentStats(mismatches=0, gaps_in_ref=0, gaps_in_query=0)
@@ -236,7 +247,7 @@ class TestClassifyMutationType:
 
 
 class TestBuildMutationSummary:
-    """build_mutation_summary — 汇总统计"""
+    """build_mutation_summary — Aggregate statistics"""
 
     def test_empty(self):
         from crisviper import build_mutation_summary
@@ -262,7 +273,7 @@ class TestBuildMutationSummary:
         result = AlignmentResult(
             query=QueryRecord(readName="test", seq="ACGT"),
             success=False,
-            error="锚定失败",
+            error="alignment failed",
         )
         summary = build_mutation_summary([result])
         assert summary["type_counts"] == {}

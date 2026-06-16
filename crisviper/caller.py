@@ -4,7 +4,7 @@ Port of MATLAB's CallableCollection.call_alleles_coarse_grain and
 call_alleles_exact.
 """
 
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 from dataclasses import dataclass, field
 from crisviper.models import AlignmentResult, MutationEvent, MutationType
 
@@ -159,8 +159,10 @@ def call_alleles_coarse_grain(
             mutations=group[0].mutations,
         ))
 
-        # MATLAB dominant_only: only the top group that exceeds dominant_frac
-        break
+        # Continue checking remaining groups; groups are sorted by descending
+        # weight so the 'key_weight / total_weight <= dominant_frac' check
+        # above will naturally terminate when no more groups dominate.
+        continue
 
     return alleles
 
@@ -217,7 +219,9 @@ def call_alleles_exact(
             mutations=valid[idx[0]].mutations,
         ))
 
-        # MATLAB dominant_only: only the top group
-        break
+        # Continue checking remaining groups; groups are sorted by descending
+        # weight so the 'key_weight / total_weight <= dominant_frac' check
+        # above will naturally terminate when no more groups dominate.
+        continue
 
     return alleles
