@@ -2,10 +2,6 @@
 
 **Affine-gap alignment for CRISPR lineage tracing.** Align amplicon sequencing reads to a reference, detect indels and SNVs at cut sites, and trace edited cell lineages — across bulk, multi-target (e.g. CARLIN), and single-cell RNA-seq lineage data.
 
-```bash
-pip install crisviper
-```
-
 ## Quick start
 
 ```bash
@@ -32,7 +28,7 @@ crisviper align --reference ref.fa --queries reads.tsv --output results.json --l
 
 **Output.** JSON, TSV, or both. Optional HTML report with mutation classification, length distributions, editing efficiency, per-target editing charts, mutation segment plots, cross-target chord diagrams, and allele heatmaps. Summary tables (TSV) for allele frequency, per-target editing, filter reasons, indel length distributions, and event-level details.
 
-**Allele confidence filter.** Point-mutation-only alleles require `readCount > 5` (`--min-reads-sub`). Indel-containing alleles are unfiltered by default (`--min-reads-indel 0`). Adjust thresholds for higher precision or recall.
+**Allele confidence filter.** Point-mutation-only alleles require `readCount >= 5` (`--min-reads-sub`). Indel-containing alleles are unfiltered by default (`--min-reads-indel 0`). Adjust thresholds for higher precision or recall.
 
 **Summary tables.** The pipeline generates 6 TSV tables alongside the main output: `allele_frequency.tsv`, `per_target_editing.tsv`, `filter_reason.tsv`, `deletion_length.tsv`, `insertion_length.tsv`, and `event_level_details.tsv` — covering aggregate statistics, per-target editing rates, filter causes, length distributions, and per-event details with target overlap info.
 

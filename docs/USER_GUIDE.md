@@ -2,10 +2,6 @@
 
 ## Installation / 安装
 
-```bash
-pip install crisviper
-```
-
 或从源码安装：
 
 ```bash
@@ -202,7 +198,7 @@ ACGTACGT...
 | Option | Default | Description / 说明 |
 |--------|---------|-------------|
 | `--min-reads` | 1 | 输入侧最小 read 数阈值（预处理过滤用） |
-| `--min-reads-sub` | 5 | 纯点突变 allele 最小 read 数阈值（exclusive，>此值通过） |
+| `--min-reads-sub` | 5 | 纯点突变 allele 最小 read 数阈值（inclusive，>=此值通过） |
 | `--min-reads-indel` | 0 | 含 indel 的 allele 最小 read 数阈值（0=不过滤） |
 | `--correct-bg-sub` | on | 启用背景点突变矫正 |
 | `--keep-sub-indel-window` | 3 | 背景矫正时 indel 邻近保留窗口 (bp) |
