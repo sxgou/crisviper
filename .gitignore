@@ -45,3 +45,4 @@ examples/output/
 
 # Test cache
 .pytest_cache/
+.bitfun/

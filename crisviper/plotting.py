@@ -52,21 +52,33 @@ def _img_to_b64(fig, **savefig_kw) -> str:
     return img_b64
 
 
-def _gen_indel_length_chart(report_data: dict) -> str:
-    """Butterfly chart: insertion lengths upward, deletion lengths downward (read-weighted, percentage Y-axis)."""
-    ms = report_data.get("mutation_stats", {})
-    ins_counts = ms.get("all_insertion_lengths_reads", {})
-    del_counts = ms.get("all_deletion_lengths_reads", {})
-    if not ins_counts and not del_counts:
-        from collections import Counter
-        ins_raw = ms.get("all_insertion_lengths", [])
-        del_raw = ms.get("all_deletion_lengths", [])
-        if not ins_raw and not del_raw:
-            return ""
-        ins_counts = Counter(ins_raw)
-        del_counts = Counter(del_raw)
-    else:
+def _gen_indel_length_chart(ins_length_reads: dict = None,
+                            del_length_reads: dict = None,
+                            report_data: dict = None) -> str:
+    """Butterfly chart: insertion lengths upward, deletion lengths downward (read-weighted, percentage Y-axis).
+
+    Args:
+        ins_length_reads: Dict of {insertion_length: read_count} (from summary data).
+        del_length_reads: Dict of {deletion_length: read_count} (from summary data).
+        report_data: Fallback report dict (reads from mutation_stats if above not provided).
+    """
+    ins_counts = ins_length_reads or {}
+    del_counts = del_length_reads or {}
+    if not ins_counts and not del_counts and report_data:
+        ms = report_data.get("mutation_stats", {})
+        ins_counts = ms.get("all_insertion_lengths_reads", {})
+        del_counts = ms.get("all_deletion_lengths_reads", {})
+        if not ins_counts and not del_counts:
+            from collections import Counter
+            ins_raw = ms.get("all_insertion_lengths", [])
+            del_raw = ms.get("all_deletion_lengths", [])
+            if ins_raw:
+                ins_counts = Counter(ins_raw)
+            if del_raw:
+                del_counts = Counter(del_raw)
+    if ins_counts:
         ins_counts = {int(k): v for k, v in ins_counts.items()}
+    if del_counts:
         del_counts = {int(k): v for k, v in del_counts.items()}
 
     # Full range from 1 to max observed length (no 50bp cap)
@@ -104,6 +116,7 @@ def _gen_indel_length_chart(report_data: dict) -> str:
         ax.set_xticks(range(0, max_len + 1, 20))
     else:
         ax.set_xticks(range(0, max_len + 1, 50))
+    ax.set_xlim(-1, max_len + 0.5)
     ax.set_ylim(-y_lim, y_lim)
     ax.set_yticks(range(-int(y_lim), int(y_lim) + 1, 10))
     ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{int(abs(x))}%'))
@@ -132,18 +145,18 @@ def _gen_editing_pie_charts(report_data: dict) -> str:
     ax1.pie([mutated_seqs, unmutated_seqs], labels=['Mutated', 'Unmutated'],
             autopct='%1.1f%%', colors=colors, explode=explode,
             startangle=90, textprops={'fontsize': 8})
-    ax1.set_title(f'By Sequence\n({mutated_seqs:,} / {mutated_seqs + unmutated_seqs:,})',
-                  fontsize=9, fontweight='bold')
+    ax1.set_title(f'By Sequences\n({mutated_seqs:,} / {mutated_seqs + unmutated_seqs:,})',
+                  fontsize=9)
 
     # Pie 2: by read count
     ax2.pie([mutated_reads, unmutated_reads], labels=['Mutated', 'Unmutated'],
             autopct='%1.1f%%', colors=colors, explode=explode,
             startangle=90, textprops={'fontsize': 8})
-    ax2.set_title(f'By Read\n({mutated_reads:,} / {total_reads:,})',
-                  fontsize=9, fontweight='bold')
+    ax2.set_title(f'By Reads\n({mutated_reads:,} / {total_reads:,})',
+                  fontsize=9)
 
-    fig.suptitle('Editing Efficiency', fontsize=11, fontweight='bold', y=1.02)
-    fig.tight_layout()
+    fig.suptitle('Editing Efficiency', fontsize=11, y=0.96)
+    fig.tight_layout(rect=[0, 0, 1, 0.92])
     return _img_to_b64(fig)
 
 
@@ -329,22 +342,32 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
     n_rows = len(top_alleles)
 
     # 5. Adaptive cell sizing based on reference column count
-    if n_cols > 200:
-        cell_size = 10
-        font_size = 5.5
-    elif n_cols > 100:
+    if n_cols > 300:
         cell_size = 14
         font_size = 6.5
-    elif n_cols > 60:
+    elif n_cols > 200:
         cell_size = 18
         font_size = 7
-    else:
+    elif n_cols > 100:
         cell_size = 22
+        font_size = 8
+    elif n_cols > 60:
+        cell_size = 26
         font_size = 9
+    else:
+        cell_size = 30
+        font_size = 10
 
     label_w = 180  # Right-side annotation width (px)
     fig_w_px = grid_cols * cell_size + label_w
-    fig_h_px = (n_rows + 5.0) * cell_size
+
+    # Calculate fig_h to match set_aspect('equal') so no letterboxing occurs.
+    # With subplots_adjust(top=0.94): ppu_X = fig_w_px / x_range
+    #                                 ppu_Y = fig_h_px * 0.94 / y_range
+    # Set ppu_X = ppu_Y → fig_h_px = fig_w_px * y_range / (0.94 * x_range)
+    x_range = grid_cols + 15  # xlim(-5, grid_cols + 10)
+    y_range = n_rows + 5       # ylim(-2.5, n_rows + 2.5)
+    fig_h_px = fig_w_px * y_range / (0.94 * x_range)
 
     dpi = 100
     fig_w = max(8, fig_w_px / dpi)
@@ -367,7 +390,8 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
             grid[ai, ci] = color
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-    ax.set_xlim(0, grid_cols + 3)
+    fig.subplots_adjust(left=0, right=1, bottom=0, top=0.94)
+    ax.set_xlim(-5, grid_cols + 10)
     ax.set_ylim(-2.5, n_rows + 2.5)
     ax.set_aspect('equal')
     ax.axis('off')
@@ -461,7 +485,8 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
         # Right-side label with percentage and read count
         pct = total_rc / total_reads * 100
         ax.text(grid_cols + 0.3, y, f"{pct:.1f}% ({total_rc})",
-                ha='left', va='center', fontsize=max(8, font_size + 1))
+                ha='left', va='center', fontsize=max(8, font_size + 1),
+                clip_on=False)
 
     # 9. Legend (A, C, G, T, -, ins)
     lgy = -1.2
@@ -477,7 +502,6 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
 
     ax.set_title(f'Top {top_n} Alleles — ref {window_start + 1}–{window_end + 1}bp ({n_cols}bp)',
                  fontsize=max(10, font_size + 3), pad=4)
-    fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
     return _img_to_b64(fig, bbox_inches=None)
 
 
@@ -488,7 +512,8 @@ def generate_charts(results: List[Dict], report_data: dict = None,
                      allele_window_end: int = None,
                      allele_top_n: int = 50,
                      primer5_len: int = 23,
-                     primer3_len: int = 33) -> Dict[str, str]:
+                     primer3_len: int = 33,
+                     summary_data: dict = None) -> Dict[str, str]:
     """
     Generate all chart images and return as a {chart_name: base64} dictionary.
 
@@ -506,13 +531,19 @@ def generate_charts(results: List[Dict], report_data: dict = None,
         allele_window_start: Start position for heatmap window (default 0).
         allele_window_end: End position for heatmap window (inclusive).
         allele_top_n: Number of top alleles to show in heatmap (default 50).
+        summary_data: Optional summary_data dict from save_summary_tables.
+                      Provides ins_length_reads/del_length_reads for the indel chart.
     """
     charts = {}
     if not _ensure_mpl():
         return charts
     try:
         if report_data:
-            charts['indel_length'] = _gen_indel_length_chart(report_data)
+            ins_r = summary_data.get("ins_length_reads") if summary_data else None
+            del_r = summary_data.get("del_length_reads") if summary_data else None
+            charts['indel_length'] = _gen_indel_length_chart(
+                ins_length_reads=ins_r, del_length_reads=del_r,
+                report_data=report_data)
             charts['editing_pie'] = _gen_editing_pie_charts(report_data)
         if ref_seq and ref_length > 0:
             ws = allele_window_start if allele_window_start is not None else 0

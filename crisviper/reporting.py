@@ -292,38 +292,33 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
         ]
     }
 
-    # Per-target mutation stats
+    # Per-target mutation stats (reads-weighted, from summary_data if available)
     report["per_target"] = {}
-    if cutsites:
+    if summary_data and summary_data.get("per_target"):
+        report["per_target"] = summary_data["per_target"]
+    elif cutsites:
         for cs in cutsites:
             if not cs.name.startswith("Target"):
                 continue
-            covering = 0
-            mutated = 0
-            del_c = ins_c = sub_c = 0
+            total_reads = 0
+            mutated_reads = 0
             for r in successful:
+                rc = r.get("readCount", 1)
                 ar = r.get("aligned_ref", "")
                 if not ar:
                     continue
                 ref_bases = sum(1 for c in ar if c != '-')
                 if ref_bases <= cs.start:
                     continue
-                covering += 1
-                has_mut = False
+                total_reads += rc
                 for m in r.get("mutations", []):
                     mp = m.get("ref_pos", -1)
                     if cs.start - 3 <= mp <= cs.end + 3:
-                        has_mut = True
-                        mt = m.get("type", "")
-                        if mt == "deletion": del_c += 1
-                        elif mt == "insertion": ins_c += 1
-                        elif mt == "substitution": sub_c += 1
-                if has_mut:
-                    mutated += 1
-            rate = str(round(mutated/covering*100, 1)) if covering else "N/A"
+                        mutated_reads += rc
+                        break
+            rate = str(round(mutated_reads / total_reads * 100, 1)) if total_reads else "N/A"
             report["per_target"][cs.name] = {
-                "total": covering, "mutated": mutated, "rate": rate,
-                "del": del_c, "ins": ins_c, "sub": sub_c,
+                "total": total_reads, "mutated": mutated_reads, "rate": rate,
             }
 
     # ── Override with summary_data if provided (source of truth from summary tables) ──
@@ -352,7 +347,8 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
                                   ref_seq=ref_seq, cutsites=cutsites,
                                   allele_window_start=allele_window_start,
                                   allele_window_end=allele_window_end,
-                                  allele_top_n=allele_top_n)
+                                  allele_top_n=allele_top_n,
+                                  summary_data=summary_data)
         _save_report_html(report, path, charts,
                             ref_seq=ref_seq, cutsites=cutsites)
         log.info("HTML analysis report saved to %s", path)
@@ -397,6 +393,20 @@ def _save_report_html(report: dict, output_path: str, charts: dict = None,
             f"</tr>\n"
         )
 
+    # WT row (relative to total, not just mutated)
+    total_seqs = s.get("mutated_sequences", 0) + s.get("unmutated_sequences", 0)
+    total_rds = s.get("total_reads_successful", 0)
+    unmutated_reads = s.get("unmutated_reads", total_rds - s.get("mutated_reads", 0))
+    wt_seq_pct = s.get("unmutated_sequences", 0) / total_seqs * 100 if total_seqs > 0 else 0
+    wt_reads_pct = unmutated_reads / total_rds * 100 if total_rds > 0 else 0
+    type_rows += (
+        f"<tr style='background:#f8f9fc;font-weight:600;'>"
+        f"<td>WT (Unmutated)</td>"
+        f"<td>{s.get('unmutated_sequences', 0)}</td><td>{wt_seq_pct:.1f}%</td>"
+        f"<td>{unmutated_reads}</td><td>{wt_reads_pct:.1f}%</td>"
+        f"</tr>\n"
+    )
+
     # Embed chart images
     def _img_html(key):
         b64 = (charts or {}).get(key, '')
@@ -429,7 +439,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 .sidebar a{{display:block;padding:8px 12px;color:#cbd5e1;text-decoration:none;font-size:12px;
   border-left:3px solid transparent;}}
 .sidebar a:hover{{background:rgba(255,255,255,.06);color:#fff;border-left-color:var(--pri);}}
-.main{{margin-left:200px;padding:20px 24px;max-width:1400px;}}
+.main{{margin-left:200px;padding:20px 24px;max-width:100%;}}
 h2{{font-size:18px;font-weight:700;margin:28px 0 12px;padding-bottom:4px;border-bottom:2px solid var(--pri);}}
 .cards{{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin:12px 0;}}
 .card{{background:var(--card);border-radius:6px;padding:12px;
@@ -463,7 +473,7 @@ tr:hover td{{background:#f8fafc;}}
 .chart-row{{display:flex;flex-wrap:wrap;gap:12px;margin:12px 0;}}
 .chart-row .chart-box{{flex:1;min-width:280px;}}
 .chart-scroll{{overflow-x:auto;max-width:100%;}}
-.chart-scroll .allele-img{{max-width:none;}}
+.chart-scroll .allele-img{{max-width:none;max-height:44vh;width:auto;}}
 
 footer{{margin-top:30px;padding-top:10px;border-top:1px solid var(--bdr);
   color:#aaa;font-size:11px;text-align:center;}}
@@ -527,7 +537,7 @@ footer{{margin-top:30px;padding-top:10px;border-top:1px solid var(--bdr);
     f'<div class=stat-item>'
     f'<div class=sl>{csname}</div>'
     f'<div class=sv>{d["rate"]}%</div>'
-    f'<div style=font-size:10px;color:#94a3b8;>mutated {d["mutated"]}/{d["total"]} sequences</div></div>\n'
+    f'<div style=font-size:10px;color:#94a3b8;>mutated {d["mutated"]}/{d["total"]} reads</div></div>\n'
     for csname, d in report.get("per_target", {}).items()
   ) or '<p style=color:#94a3b8;>No cutsite data available.</p>'}
 </div></div>

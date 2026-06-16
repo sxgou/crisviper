@@ -204,6 +204,7 @@ def save_summary_tables(results: List[Dict], output_dir: str,
                      "Del_intra", "Del_inter", "Ins",
                      "Indel_intra", "Indel_inter", "Sub",
                      "Avg_Mut_Length", "Wt"]
+    per_target_data = {}
     with open(path_pt, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames_pt, delimiter='\t')
         writer.writeheader()
@@ -273,6 +274,7 @@ def save_summary_tables(results: List[Dict], output_dir: str,
                     "Sub": sub_c,
                     "Avg_Mut_Length": avg_len, "Wt": wt,
                 })
+                per_target_data[cs.name] = {"total": covering, "mutated": edited, "rate": rate}
         else:
             writer.writerow({"Target": "No cutsite data available",
                             "Total": "", "Edited": "", "Rate_Pct": "",
@@ -408,6 +410,7 @@ def save_summary_tables(results: List[Dict], output_dir: str,
         "editing_efficiency_pct": round(mutated_seqs / len(successful) * 100, 2) if successful else 0.0,
         "del_length_reads": dict(del_len_reads),
         "ins_length_reads": dict(ins_len_reads),
+        "per_target": per_target_data,
     }
 
 
