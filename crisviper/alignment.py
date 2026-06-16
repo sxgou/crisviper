@@ -2,7 +2,18 @@
 
 import numpy as np
 from typing import Tuple, Dict, List, Optional
-from numba import jit
+
+# Optional numba JIT — falls back to pure NumPy/Python when unavailable
+try:
+    from numba import jit
+    _HAS_NUMBA = True
+except ImportError:
+    _HAS_NUMBA = False
+    def jit(nopython=True, cache=True):
+        """No-op numba JIT decorator fallback."""
+        def wrapper(func):
+            return func
+        return wrapper
 
 
 def count_gap_blocks(seq: str) -> List[int]:
@@ -220,7 +231,8 @@ def _dp_fill_numba_standard(M, Ix, Iy, ref_seq, query_seq,
                              gap_open, gap_extend, go_ge,
                              gap_exit_bonus, use_gap_exit,
                              run_len, use_short_match,
-                             short_match_window, short_match_discount):
+                             short_match_window, short_match_discount,
+                             use_isolated_base, isolated_base_penalty):
     """Numba-JIT: standard Gotoh DP fill (no profiles, no homology)."""
     m = len(ref_seq)
     n = len(query_seq)
@@ -238,6 +250,10 @@ def _dp_fill_numba_standard(M, Ix, Iy, ref_seq, query_seq,
                     s = match_score
             else:
                 s = match_score if r_char == q_char else mismatch_penalty
+
+            # Isolated base penalty: run_len == 1 means isolated match
+            if use_isolated_base and r_char == q_char and run_len[i - 1, j - 1] == 1:
+                s += isolated_base_penalty
 
             # M[i, j]
             if use_gap_exit:
@@ -268,7 +284,8 @@ def affine_gap_alignment(ref_seq: str, query_seq: str,
                          gap_extend: float = -0.1,
                          gap_exit_bonus: float = 0.0,
                          short_match_window: int = 0,
-                         short_match_discount: float = 1.0) -> Tuple[float, str, str, Dict]:
+                         short_match_discount: float = 1.0,
+                         isolated_base_penalty: float = 0.0) -> Tuple[float, str, str, Dict]:
     m, n = len(ref_seq), len(query_seq)
     M = np.zeros((m + 1, n + 1), dtype=float)
     Ix = np.zeros((m + 1, n + 1), dtype=float)
@@ -288,8 +305,10 @@ def affine_gap_alignment(ref_seq: str, query_seq: str,
     go_ge = gap_open + gap_extend
     use_gap_exit = (gap_exit_bonus != 0.0)
     use_short_match = (short_match_window > 0 and short_match_discount < 1.0)
+    use_isolated_base = (isolated_base_penalty < 0.0)
+    needs_run_len = use_short_match or use_isolated_base
 
-    if use_short_match:
+    if needs_run_len:
         is_match_arr = np.array([[ref_seq[i] == query_seq[j]
                                    for j in range(n)] for i in range(m)])
         run_len = np.zeros((m + 1, n + 1), dtype=np.int32)
@@ -304,6 +323,7 @@ def affine_gap_alignment(ref_seq: str, query_seq: str,
         gap_exit_bonus, use_gap_exit,
         run_len, use_short_match,
         short_match_window, short_match_discount,
+        use_isolated_base, isolated_base_penalty,
     )
 
     # Global alignment: only M[m, n] is valid at termination

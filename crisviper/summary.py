@@ -22,7 +22,9 @@ log = get_logger(__name__)
 
 def save_summary_tables(results: List[Dict], output_dir: str,
                          ref_seq: str = "", cutsites: Optional[list] = None,
-                         read_to_allele_path: Optional[str] = None) -> Dict:
+                         read_to_allele_path: Optional[str] = None,
+                         target_region_left: int = 13,
+                         target_region_right: int = 7) -> Dict:
     """Generate 5 summary TSV tables and return pre-computed summary statistics.
 
     Tables produced:
@@ -36,16 +38,19 @@ def save_summary_tables(results: List[Dict], output_dir: str,
     When original_read_names are present in results and read_to_allele_path
     is provided, also writes a read-to-allele mapping table.
 
-    Returns:
-        Dict with pre-computed statistics for HTML report: total_reads_successful,
-        mutated/unmutated counts (seqs & reads), indel length reads, etc.
-
     Args:
-        results: List of alignment result dicts (from AlignmentResult.to_dict()).
-        output_dir: Output directory (created automatically).
-        ref_seq: Reference sequence (used for cutsite detection).
-        cutsites: CutsiteRegion list (optional; per_target table is empty when absent).
-        read_to_allele_path: Path to write read→allele mapping TSV (optional).
+        results: List of alignment result dicts.
+        output_dir: Output directory.
+        ref_seq: Reference sequence (for cutsite detection).
+        cutsites: CutsiteRegion list (per_target table is empty when absent).
+        read_to_allele_path: Path for read-to-allele mapping TSV (optional).
+        target_region_left: Bases left of cutsite start to extend target region
+            (default 13 = CARLIN conserved region length).
+        target_region_right: Bases right of cutsite end to extend target region
+            (default 7 = CARLIN linker length).
+
+    Returns:
+        Dict with pre-computed statistics for HTML report.
     """
     os.makedirs(output_dir, exist_ok=True)
     successful = [r for r in results if "error" not in r]
@@ -197,7 +202,7 @@ def save_summary_tables(results: List[Dict], output_dir: str,
     if cutsites:
         for cs in cutsites:
             if cs.name.startswith("Target"):
-                all_target_intervals.append((cs.name, cs.start - 13, cs.end + 7))
+                all_target_intervals.append((cs.name, cs.start - target_region_left, cs.end + target_region_right))
 
     path_pt = os.path.join(output_dir, "per_target_editing.tsv")
     fieldnames_pt = ["Target", "Total", "Edited", "Rate_Pct",
@@ -212,9 +217,9 @@ def save_summary_tables(results: List[Dict], output_dir: str,
             for cs in cutsites:
                 if not cs.name.startswith("Target"):
                     continue
-                # Full target 27bp region: conserved 13bp + cutsite 7bp + PAM/Linker 7bp
-                target_start = cs.start - 13
-                target_end = cs.end + 7
+                # Full target region: conserved + cutsite + linker
+                target_start = cs.start - target_region_left
+                target_end = cs.end + target_region_right
                 covering = 0
                 edited = 0
                 del_intra_c = del_inter_c = 0
@@ -364,7 +369,9 @@ def save_summary_tables(results: List[Dict], output_dir: str,
     # ═══════════════════════════════════════════════════════════════
     # 5. event_level_details.tsv
     # ═══════════════════════════════════════════════════════════════
-    _save_event_level_table(successful, output_dir, cutsites)
+    _save_event_level_table(successful, output_dir, cutsites,
+                            target_region_left=target_region_left,
+                            target_region_right=target_region_right)
 
     # ═══════════════════════════════════════════════════════════════
     # 6. Compute aggregated stats for HTML report
@@ -408,6 +415,7 @@ def save_summary_tables(results: List[Dict], output_dir: str,
         "mutated_reads": mutated_reads,
         "unmutated_reads": unmutated_reads,
         "editing_efficiency_pct": round(mutated_seqs / len(successful) * 100, 2) if successful else 0.0,
+        "editing_efficiency_reads_pct": round(mutated_reads / total_reads_success * 100, 2) if total_reads_success else 0.0,
         "del_length_reads": dict(del_len_reads),
         "ins_length_reads": dict(ins_len_reads),
         "per_target": per_target_data,
@@ -415,7 +423,9 @@ def save_summary_tables(results: List[Dict], output_dir: str,
 
 
 def _save_event_level_table(successful: List[Dict], output_dir: str,
-                            cutsites: Optional[list] = None) -> None:
+                            cutsites: Optional[list] = None,
+                            target_region_left: int = 13,
+                            target_region_right: int = 7) -> None:
     """Write event-level statistics: one row per unique mutation event.
 
     Each mutation event is uniquely identified by (type, start_pos, length).
@@ -426,15 +436,21 @@ def _save_event_level_table(successful: List[Dict], output_dir: str,
         successful: List of successful alignment result dicts.
         output_dir: Output directory path.
         cutsites: CutsiteRegion list for target interval computation.
+        target_region_left: Bases left of cutsite start for target interval.
+        target_region_right: Bases right of cutsite end for target interval.
     """
     from collections import defaultdict
 
-    # Build target intervals (27bp: conserved 13bp + cutsite 7bp + PAM/Linker 7bp)
+    import re
+    # Build target intervals: cutsite ± flanking regions
     target_intervals = []
     if cutsites:
         for cs in cutsites:
             if cs.name.startswith("Target"):
-                target_intervals.append((cs.name, cs.start - 13, cs.end + 7))
+                target_intervals.append((cs.name, cs.start - target_region_left, cs.end + target_region_right))
+
+    # Helper for numeric comparison of target names (e.g. "Target10" → 10)
+    _target_num = lambda name: int(re.search(r'\d+', name).group()) if re.search(r'\d+', name) else 0
 
     # Aggregate events by signature: (type, start_pos, length)
     event_groups = defaultdict(lambda: {"sequences": 0, "reads": 0,
@@ -461,9 +477,11 @@ def _save_event_level_table(successful: List[Dict], output_dir: str,
             for tname, ts, te in target_intervals:
                 if rp <= te and event_end >= ts:
                     eg["affected"].add(tname)
-                    if eg["min_target"] is None or tname < eg["min_target"]:
+                    # Use numeric comparison for target name ordering
+                    tnum = _target_num(tname)
+                    if eg["min_target"] is None or tnum < _target_num(eg["min_target"]):
                         eg["min_target"] = tname
-                    if eg["max_target"] is None or tname > eg["max_target"]:
+                    if eg["max_target"] is None or tnum > _target_num(eg["max_target"]):
                         eg["max_target"] = tname
 
     if not event_groups:

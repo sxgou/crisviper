@@ -102,6 +102,8 @@ def _explicit_cli_flags() -> set:
 
     Returns a set of flag names (with hyphens converted to underscores).
     Handles both --flag and --no-flag forms, as well as --flag=value.
+    For --no-* flags, both the full name (no_xxx) and the base name (xxx)
+    are added so that _BOOL_CLI_FLAGS matching succeeds.
     """
     explicit = set()
     for arg in sys.argv[1:]:
@@ -111,6 +113,9 @@ def _explicit_cli_flags() -> set:
             name = parts[0].lstrip('-').replace('-', '_')
             if name:
                 explicit.add(name)
+                # For --no-* flags, also add the base name (strip no_ prefix)
+                if name.startswith('no_'):
+                    explicit.add(name[3:])
     return explicit
 
 
@@ -519,7 +524,7 @@ def main():
     align_parser.add_argument("--min-reads", type=int, default=1,
                               help="Input-side minimum read count threshold (default: 1, no filtering, used for pre-filtering)")
     align_parser.add_argument("--min-reads-sub", type=int, default=None,
-                              help="Minimum read count (exclusive, >threshold passes) for pure-substitution alleles "
+                              help="Minimum read count (inclusive, >=threshold passes) for pure-substitution alleles "
                                    "(default: 5). Purpose: Filters out low-abundance substitution-only alleles "
                                    "that are likely sequencing errors or PCR artifacts rather than genuine "
                                    "biological variation. Principle: Pure substitution alleles (no indels) at "
@@ -530,7 +535,7 @@ def main():
                                    "(e.g., rare clone detection). Only applies when the allele has only "
                                    "substitutions (no indels).")
     align_parser.add_argument("--min-reads-indel", type=int, default=None,
-                              help="Minimum read count (exclusive) for alleles containing indels (default: 0, "
+                              help="Minimum read count (inclusive, >=threshold passes) for alleles containing indels (default: 0, "
                                    "no filter). Purpose: Indel alleles are the primary signal of Cas9 editing "
                                    "activity and are typically trusted even at low read counts. However, in "
                                    "noisy datasets, a low threshold can help filter spurious indel artifacts. "
@@ -611,8 +616,8 @@ def main():
                                    "50 for standard reports with good coverage. 100-200 for comprehensive "
                                    "views of complex editing outcomes. 10-20 for quick overviews or when "
                                    "only dominant clones are of interest.")
-    align_parser.add_argument("--read-to-allele", metavar="FILE", default=None,
-                              help="Output path for read-to-allele mapping TSV. Requires FASTQ input (--queries "
+    align_parser.add_argument("--read-to-allele", action="store_true",
+                              help="Output read-to-allele mapping table to output folder. Requires FASTQ input (--queries "
                                    "or --fastq1/--fastq2). Only supported with FASTQ input; TSV and FASTA inputs "
                                    "will ignore this option with a warning.")
 
@@ -673,7 +678,7 @@ def main():
         t = _log_timing(log, "Read reference", t0)
 
         # Read query sequences
-        read_to_allele_active = bool(args.read_to_allele)
+        read_to_allele_active = args.read_to_allele
         if args.fastq1 and args.fastq2:
             # Paired-end FASTQ input
             log.info("Processing paired-end FASTQ: %s + %s", args.fastq1, args.fastq2)
@@ -735,14 +740,15 @@ def main():
 
         # ── Compute chunk size (backward-compatible logic) ──
         total_queries = len(query_records)
-        if config.chunk_size:
-            chunk_size = config.chunk_size
-        else:
+        if total_queries == 0:
+            log.warning("No query sequences to align (empty input)")
+        if not config.chunk_size and total_queries > 0:
             target_chunks = max(config.threads * 3, 12)
-            chunk_size = max(100, total_queries // target_chunks)
-        log.info("  Chunk size: %d seqs/chunk (%d chunks total)", chunk_size,
-                 (total_queries + chunk_size - 1) // chunk_size)
-        config.chunk_size = chunk_size
+            config.chunk_size = max(100, total_queries // target_chunks)
+        elif not config.chunk_size:
+            config.chunk_size = 100
+        log.info("  Chunk size: %d seqs/chunk (%d chunks total)", config.chunk_size,
+                 (total_queries + config.chunk_size - 1) // config.chunk_size if total_queries else 0)
 
         # Display configuration info
         radius_info = "auto" if config.gradient_radius is None else f"{config.gradient_radius}bp"
@@ -773,8 +779,8 @@ def main():
         # ── Save summary tables ──
         output_dir = os.path.dirname(os.path.abspath(args.output))
         summary_data = save_summary_tables(output_results, output_dir, ref_seq=ref_seq,
-                                            cutsites=_get_display_cutsites(ref_seq),
-                                            read_to_allele_path=args.read_to_allele if read_to_allele_active else None)
+                                            cutsites=_get_display_cutsites(ref_seq, config.amplicon_config),
+                                            read_to_allele_path=os.path.join(output_dir, "read_to_allele.tsv") if read_to_allele_active else None)
         t = _log_timing(log, "Save summary tables", t)
 
         # ── Generate analysis report ──
@@ -784,7 +790,7 @@ def main():
             generate_report(output_results, report_output, args.report,
                              ref_length=len(ref_seq),
                              ref_seq=ref_seq,
-                             cutsites=_get_display_cutsites(ref_seq),
+                             cutsites=_get_display_cutsites(ref_seq, config.amplicon_config),
                              allele_window_start=args.allele_window_start,
                              allele_window_end=args.allele_window_end,
                              allele_top_n=args.allele_top_n,
@@ -810,11 +816,14 @@ def _default_report_path(output_path: str) -> str:
     return f"{base}_report"
 
 
-def _get_display_cutsites(ref_seq: str):
+def _get_display_cutsites(ref_seq: str, amplicon_config=None):
     """Get cutsite information for heatmap annotations."""
     try:
         from crisviper import get_amplicon_structure
-        cs = get_amplicon_structure(ref_seq)
+        from crisviper.config import AmpliconConfig
+        if amplicon_config is None:
+            amplicon_config = AmpliconConfig.carlin_standard()
+        cs = get_amplicon_structure(ref_seq, config=amplicon_config)
         if cs:
             log.info("Auto-detected %d cutsite regions (for heatmap annotation)", len(cs))
         return cs

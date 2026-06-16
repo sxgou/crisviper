@@ -257,17 +257,13 @@ def extract_mutations(
 
         # ── Case 3: Insertion (reference has gap, query has base) ──
         elif ar == '-' and aq != '-':
-            ref_pos = ref_pos_map[i] if i > 0 else 0
-            # Fallback: find nearest non-gap ref position if first column is a gap
-            if ref_pos < 0:
-                for k in range(i, alen):
-                    p = ref_pos_map[k]
-                    if p >= 0:
-                        ref_pos = p
-                        break
-                    elif k < alen - 1 and ref_pos_map[k + 1] >= 0:
-                        ref_pos = ref_pos_map[k + 1]
-                        break
+            # Insertion position: use the ref base immediately before the
+            # insertion gap (i > 0 → ref_pos_map[i-1] is always >= 0 since
+            # this is the first column of a new insertion block).
+            if i > 0:
+                ref_pos = max(0, ref_pos_map[i - 1])
+            else:
+                ref_pos = 0
             j = i
             while j < alen and aligned_ref[j] == '-' and aligned_query[j] != '-':
                 j += 1
@@ -361,7 +357,7 @@ def _merge_adjacent_indels(events: List[MutationEvent]) -> List[MutationEvent]:
             for e in group
         )
 
-        if has_indel:
+        if has_indel and len(group) > 1:
             ref_start = min(e.ref_pos for e in group)
             ref_end = max(exclusive_end(e) for e in group)
             length = ref_end - ref_start
@@ -377,6 +373,9 @@ def _merge_adjacent_indels(events: List[MutationEvent]) -> List[MutationEvent]:
                 raw_ref_segment=all_ref,
                 raw_query_segment=all_query,
             ))
+        elif has_indel:
+            # Single insertion or deletion — keep original type
+            merged.append(group[0])
         else:
             merged.extend(group)
 

@@ -154,27 +154,27 @@ def check_allele_confidence(
     """Check whether an allele passes confidence filtering thresholds.
 
     Rules:
-      - Substitution-only (no indel): requires readCount > min_reads_sub.
-      - Indel-containing: requires readCount > min_reads_indel.
+      - Substitution-only (no indel): requires readCount >= min_reads_sub.
+      - Indel-containing: requires readCount >= min_reads_indel.
       - Wild-type (no mutations): passes automatically.
 
     Args:
         stats: Alignment statistics for this allele.
         read_count: Read count supporting this allele.
-        min_reads_sub: Minimum read count for pure-substitution alleles.
-        min_reads_indel: Minimum read count for indel-containing alleles.
+        min_reads_sub: Minimum read count for pure-substitution alleles (inclusive).
+        min_reads_indel: Minimum read count for indel-containing alleles (inclusive).
 
     Returns:
         Tuple of (passed: bool, reason: str). Empty reason means passed.
     """
     if not stats.has_indel and stats.mismatches > 0:
-        # Substitution-only: must exceed threshold
+        # Substitution-only: must reach threshold
         if read_count < min_reads_sub:
-            return False, f"False positive: substitution-only with insufficient reads ({read_count}<={min_reads_sub})"
+            return False, f"False positive: substitution-only with insufficient reads ({read_count}<{min_reads_sub})"
     elif stats.has_indel:
-        # Indel-containing: must exceed threshold
+        # Indel-containing: must reach threshold
         if read_count < min_reads_indel:
-            return False, f"False positive: indel with insufficient reads ({read_count}<={min_reads_indel})"
+            return False, f"False positive: indel with insufficient reads ({read_count}<{min_reads_indel})"
     return True, ""
 
 
@@ -337,7 +337,7 @@ def align_single(
         )
 
     if not ar:
-        return AlignmentResult.error_result(query, "Full-length alignment failed")
+        return AlignmentResult.error_result(query, "Full-length alignment failed", category="alignment")
 
     # ── Step 2: Primer region alignment quality check (post-alignment) ──
     p5_ok, p5_match, p3_ok, p3_match = _check_primer_quality(
@@ -351,12 +351,13 @@ def align_single(
             query,
             f"Primer anchoring failed: Primer5({p5_match}/{p5}<{n5}) "
             f"Primer3({p3_match}/{p3}<{n3})",
+            category="anchor",
         )
 
     # ── Step 3: Extract internal (primer-trimmed) region ──
     ar_int, aq_int, int_r = _extract_internal_region(ar, aq, r_seq, p5, p3)
     if ar_int is None:
-        return AlignmentResult.error_result(query, "Failed to extract internal region from full-length alignment")
+        return AlignmentResult.error_result(query, "Failed to extract internal region from full-length alignment", category="extraction")
 
     # ── Step 4: Background substitution correction (pre-allele-merging) ──
     if config.correct_bg_sub and cutsites is not None:
@@ -410,7 +411,7 @@ def align_single(
         min_reads_indel=config.min_reads_indel,
     )
     if not passed:
-        return AlignmentResult.error_result(query, reason)
+        return AlignmentResult.error_result(query, reason, category="noise")
 
     return AlignmentResult(
         query=query,
@@ -531,6 +532,7 @@ def _align_full_standard(
             gap_exit_bonus=config.gap_exit_strength,
             short_match_window=config.short_match_window,
             short_match_discount=config.short_match_discount,
+            isolated_base_penalty=config.isolated_base_penalty,
         )
     return score, ar, aq, raw_stats
 
@@ -848,9 +850,9 @@ class Pipeline:
         stats = PipelineStats()
         stats.total_queries = len(results)
 
-        # Categorize discard reasons
-        n_anchor = sum(1 for r in results if not r.success and "anchoring" in r.error.lower())
-        n_noise = sum(1 for r in results if not r.success and "false positive" in r.error.lower())
+        # Categorize discard reasons using failure_category field
+        n_anchor = sum(1 for r in results if not r.success and r.failure_category == "anchor")
+        n_noise = sum(1 for r in results if not r.success and r.failure_category == "noise")
 
         # Tally successful and failed
         successful = [r for r in results if r.success]

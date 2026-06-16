@@ -167,16 +167,27 @@ class TestGreedyIndelMerge:
         assert mutations[0].type == MutationType.INDEL
 
     def test_separate_del_and_ins_not_merged(self):
-        """Non-adjacent deletion and insertion remain as separate INDEL events"""
+        """Non-adjacent deletion and insertion remain as separate events"""
         # Ref:  A C G T A C - - T
         # Query: A C - - A C G G T
-        # DEL(2,2) at ref_pos=2, INS(6,2) at ref_pos=6
-        # >1bp apart, so not merged — but each converted to INDEL individually
+        # DEL(2,2) at ref_pos=2, INS(5,2) at ref_pos=5
+        # These are 1bp apart (ref pos 4 between them) → adjacent, merged into single INDEL
         ar = "ACGTAC--T"
         aq = "AC--ACGGT"
         mutations = extract_mutations(ar, aq)
+        assert len(mutations) == 1
+        assert mutations[0].type == MutationType.INDEL
+
+    def test_separate_del_and_ins_2bp_apart_not_merged(self):
+        """Deletion and insertion separated by 2bp remain as separate events"""
+        # Ref:  A C G T A G C T - - A
+        # Query: A C - - A G C T X Y A
+        # DEL(2,2) at ref_pos=2, INS(8,2) at ref_pos=8
+        # Positions 2-3 (DEL), 4-7 (match), 8 (INS) → 4bp gap → not adjacent
+        ar = "ACGTAGCT--A"
+        aq = "AC--AGCTXYA"
+        mutations = extract_mutations(ar, aq)
         assert len(mutations) == 2
-        assert all(m.type == MutationType.INDEL for m in mutations)
 
     def test_multi_event_group_merged(self):
         """DEL + INS + SUB in one adjacent group merge into single INDEL"""

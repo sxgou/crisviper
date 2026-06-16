@@ -66,6 +66,8 @@ class MutationEvent:
             "length": self.length,
             "in_cutsite_window": self.in_cutsite_window,
             "score": self.score,
+            "raw_ref_segment": self.raw_ref_segment,
+            "raw_query_segment": self.raw_query_segment,
         }
 
 
@@ -181,11 +183,12 @@ class AlignmentResult:
     error: str = ""              # Error message (when success=False)
     mutations: List[MutationEvent] = field(default_factory=list)  # Extracted mutation events
     mode: str = "standard"       # Alignment mode (standard / lineage)
+    failure_category: str = ""   # Failure category: "anchor", "noise", "alignment", "extraction"
 
     @classmethod
-    def error_result(cls, query: QueryRecord, error_msg: str) -> "AlignmentResult":
+    def error_result(cls, query: QueryRecord, error_msg: str, category: str = "alignment") -> "AlignmentResult":
         """Create an error result for a failed alignment."""
-        return cls(query=query, success=False, error=error_msg)
+        return cls(query=query, success=False, error=error_msg, failure_category=category)
 
     def to_dict(self) -> Dict:
         """Convert to dict (for backward compatibility with old output format)."""
@@ -285,7 +288,7 @@ class PipelineConfig:
     primer5_threshold: int = 19
     primer3_threshold: int = 29
 
-    # ── Allele filtering (exclusive thresholds: >threshold passes) ──
+    # ── Allele filtering (inclusive thresholds: >=threshold passes) ──
     min_reads_sub: int = 5       # Minimum readCount for pure substitution alleles
     min_reads_indel: int = 0     # Minimum readCount for indel-containing alleles (0=no filter)
 
@@ -338,10 +341,17 @@ class PipelineStats:
 
     @property
     def editing_efficiency_pct(self) -> float:
-        """Editing efficiency as a percentage."""
+        """Editing efficiency as a percentage (sequence-level)."""
         if self.successful == 0:
             return 0.0
         return self.mutated_sequences / self.successful * 100
+
+    @property
+    def editing_efficiency_reads_pct(self) -> float:
+        """Editing efficiency as a percentage (read-level, weighted by read count)."""
+        if self.total_reads == 0:
+            return 0.0
+        return self.mutated_reads / self.total_reads * 100
 
 
 @dataclass

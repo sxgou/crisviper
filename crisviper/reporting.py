@@ -365,7 +365,9 @@ def _save_report_html(report: dict, output_path: str, charts: dict = None,
     mt = report["mutation_types"]
     ms = report["mutation_stats"]
 
-    # Mutation type table rows
+    # Mutation type table rows (all percentages relative to TOTAL, not just mutated)
+    total_seqs = s.get("mutated_sequences", 0) + s.get("unmutated_sequences", 0)
+    total_rds = s.get("total_reads_successful", 0)
     type_rows = ""
     type_labels = [
         ("only_substitution", "Substitution Only"),
@@ -383,8 +385,8 @@ def _save_report_html(report: dict, output_path: str, charts: dict = None,
             reads_count = val.get("reads", 0)
         else:
             seq_count = reads_count = val
-        seq_pct = seq_count / s["mutated_sequences"] * 100 if s["mutated_sequences"] > 0 else 0
-        reads_pct = reads_count / s["mutated_reads"] * 100 if s["mutated_reads"] > 0 else 0
+        seq_pct = seq_count / total_seqs * 100 if total_seqs > 0 else 0
+        reads_pct = reads_count / total_rds * 100 if total_rds > 0 else 0
         type_rows += (
             f"<tr>"
             f"<td>{label}</td>"
@@ -393,16 +395,15 @@ def _save_report_html(report: dict, output_path: str, charts: dict = None,
             f"</tr>\n"
         )
 
-    # WT row (relative to total, not just mutated)
-    total_seqs = s.get("mutated_sequences", 0) + s.get("unmutated_sequences", 0)
-    total_rds = s.get("total_reads_successful", 0)
+    # WT row (same denominator: total)
+    unmutated_seqs = s.get("unmutated_sequences", 0)
     unmutated_reads = s.get("unmutated_reads", total_rds - s.get("mutated_reads", 0))
-    wt_seq_pct = s.get("unmutated_sequences", 0) / total_seqs * 100 if total_seqs > 0 else 0
+    wt_seq_pct = unmutated_seqs / total_seqs * 100 if total_seqs > 0 else 0
     wt_reads_pct = unmutated_reads / total_rds * 100 if total_rds > 0 else 0
     type_rows += (
         f"<tr style='background:#f8f9fc;font-weight:600;'>"
         f"<td>WT (Unmutated)</td>"
-        f"<td>{s.get('unmutated_sequences', 0)}</td><td>{wt_seq_pct:.1f}%</td>"
+        f"<td>{unmutated_seqs}</td><td>{wt_seq_pct:.1f}%</td>"
         f"<td>{unmutated_reads}</td><td>{wt_reads_pct:.1f}%</td>"
         f"</tr>\n"
     )
