@@ -55,7 +55,7 @@ def save_summary_tables(results: List[Dict], output_dir: str,
     os.makedirs(output_dir, exist_ok=True)
     successful = [r for r in results if "error" not in r]
     failed = [r for r in results if "error" in r]
-    total_reads_success = sum(r.get("readCount", 1) for r in successful)
+    total_reads_success = sum(r["readCount"] for r in successful)
 
     # ── Helper: Parse INDEL events into separate del/ins descriptions ──
     def _split_indel(m: Dict) -> List[str]:
@@ -386,7 +386,7 @@ def save_summary_tables(results: List[Dict], output_dir: str,
             mutated_reads += rc
     unmutated_seqs = len(successful) - mutated_seqs
     unmutated_reads = total_reads_success - mutated_reads
-    total_reads_all = sum(r.get("readCount", 1) for r in results)
+    total_reads_all = sum(r["readCount"] for r in results)
 
     # ═══════════════════════════════════════════════════════════════
     # 7. read_to_allele.tsv (when original_read_names are available)

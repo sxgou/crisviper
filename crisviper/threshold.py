@@ -38,6 +38,12 @@ def compute_threshold(
     field = "max_molecules" if threshold_type == "UMI" else "max_cells"
     ind_99 = max(round(len(freqs) / 100), 1)
 
+    # Guard: empty frequency array → return minimal threshold
+    if len(freqs) == 0:
+        return {field: 0, "one_tenth_99_pctl": 0, "err_floor": 0,
+                "equal_partition": int(np.ceil(n_reads / max_elem)) if max_elem else 0,
+                "read_floor": read_floor, "chosen": read_floor}
+
     # Error floor: expected number of reads at which a UMI of length `umi_length`
     # has 0 errors given per-base error rate p:  freqs[0] * (1-p)^umi_length
     err_floor_val = int(np.ceil(freqs[0] * p * (1 - p) ** (umi_length - 1)))

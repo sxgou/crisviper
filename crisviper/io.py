@@ -197,8 +197,8 @@ def merge_paired_end(
             "--overlap_diff_percent_limit", str(max_mismatch_rate),
             "--overlap_diff_limit", str(max_mismatch_diff),
             "-q", str(require_qual),
-            "-j", "/dev/null",
-            "-h", "/dev/null",
+            "-j", os.devnull,
+            "-h", os.devnull,
         ]
 
         log.info("Running fastp to merge paired-end reads...")
