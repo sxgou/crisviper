@@ -239,12 +239,6 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
     max_deletion_len = max(del_lengths) if del_lengths else 0
 
     # Read-weighted average and max lengths
-    total_ins_reads = sum(ins_length_reads.values())
-    total_del_reads = sum(del_length_reads.values())
-    avg_ins_len_reads = (sum(k * v for k, v in ins_length_reads.items()) / total_ins_reads
-                         if total_ins_reads else 0.0)
-    avg_del_len_reads = (sum(k * v for k, v in del_length_reads.items()) / total_del_reads
-                         if total_del_reads else 0.0)
 
     # Build the report dictionary
     report = {
@@ -544,8 +538,7 @@ footer{{margin-top:30px;padding-top:10px;border-top:1px solid var(--bdr);
     f'<div class=stat-item>'
     f'<div class=sl>{csname}</div>'
     f'<div class=sv>{d["rate"]}%</div>'
-    f'<div style=font-size:10px;color:#94a3b8;>mutated {d["mutated"]}/{d["total"]} reads</div></div>\n'
-    for csname, d in report.get("per_target", {}).items()
+    f'<div style=font-size:10px;color:#94a3b8;>mutated {d["mutated"]}/{d["total"]} reads</div></div>'
   ) or '<p style=color:#94a3b8;>No cutsite data available.</p>'}
 </div></div>
 
@@ -597,7 +590,6 @@ def save_text_report(
     Returns:
         The output directory path.
     """
-    from crisviper.mutation import extract_mutations, annotate_mutations
 
     os.makedirs(output_path, exist_ok=True)
 

@@ -149,7 +149,6 @@ def annotate_mutation(mutation: MutationEvent, full: bool = False) -> str:
             return f"{pos + 1}del"
         return f"{pos + 1}_{end_pos}del"
     elif mutation.type == MutationType.INSERTION:
-        ref_base = mutation.ref_base
         query_base = mutation.query_base
         if full:
             inserted = query_base.replace("-", "")

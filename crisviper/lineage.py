@@ -223,7 +223,6 @@ def get_amplicon_structure(ref_seq: str, config: AmpliconConfig = None) -> List[
         log.warning("No GAGTCG motifs found in reference sequence. "
                     "Please provide cutsite positions manually.")
         return []
-    diffs = [positions[i+1] - positions[i] for i in range(len(positions)-1)]
     first_pos = positions[0]
     period = config.period
     start = first_pos % period

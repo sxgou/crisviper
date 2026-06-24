@@ -462,7 +462,8 @@ def _save_event_level_table(successful: List[Dict], output_dir: str,
                 target_intervals.append((cs.name, cs.start - target_region_left, cs.end + target_region_right))
 
     # Helper for numeric comparison of target names (e.g. "Target10" → 10)
-    _target_num = lambda name: int(re.search(r'\d+', name).group()) if re.search(r'\d+', name) else 0
+    def _target_num(name):
+        return int(re.search(r'\d+', name).group()) if re.search(r'\d+', name) else 0
 
     # Aggregate events by signature: (type, start_pos, length)
     event_groups = defaultdict(lambda: {"sequences": 0, "reads": 0,
