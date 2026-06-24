@@ -30,10 +30,9 @@ from crisviper.logging_config import get_logger
 from crisviper.models import (
     QueryRecord, AlignmentResult, AlignmentStats,
     PipelineConfig, PipelineResult, PipelineStats,
-    MutationEvent, MutationType,
 )
-from crisviper.config import CutsiteRegion, AmpliconConfig
-from crisviper.mutation import extract_mutations, build_mutation_summary, annotate_mutations, _build_ref_pos_map_full
+from crisviper.config import CutsiteRegion
+from crisviper.mutation import extract_mutations, build_mutation_summary, _build_ref_pos_map_full
 from crisviper.alignment import (
     affine_gap_alignment,
     affine_gap_alignment_position_aware,
@@ -45,8 +44,7 @@ from crisviper.lineage import (
     build_homology_penalty_profile,
     get_amplicon_structure,
 )
-from crisviper.denoiser import directional_adjacency_top_down_denoiser
-from crisviper.caller import call_alleles_coarse_grain, call_alleles_exact, CalledAllele
+from crisviper.caller import call_alleles_coarse_grain, call_alleles_exact
 
 log = get_logger(__name__)
 
@@ -603,7 +601,6 @@ def _merge_del_ins_del(ar_int: str, aq_int: str) -> Tuple[str, str]:
                     new_ar_seg = ref_b1 + ref_b3 + '-' * b2_len
                     new_aq_seg = '-' * total_del + q_b2
 
-                    seg_len = b1_len + b2_len + b3_len
                     result_ar[b1_start:b3_end] = list(new_ar_seg)
                     result_aq[b1_start:b3_end] = list(new_aq_seg)
                     changed = True
@@ -814,7 +811,6 @@ class Pipeline:
                         cutsites=self.cutsites,
                     )
                     future_to_idx = {executor.submit(chunk_func, ch): i for i, ch in enumerate(chunks)}
-                    bpp_seen = False
                     for future in as_completed(future_to_idx):
                         idx = future_to_idx[future]
                         try:
@@ -822,7 +818,6 @@ class Pipeline:
                             processed_indices.add(idx)
                         except BrokenProcessPool:
                             log.error("  Chunk %d: process pool broken, will reprocess", idx)
-                            bpp_seen = True
                             break
                         except Exception as e:
                             log.error("  Chunk %d failed, will reprocess: %s", idx, e)

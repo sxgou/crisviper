@@ -11,7 +11,7 @@ import csv
 import shutil
 import subprocess
 import tempfile
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Tuple
 from collections import Counter
 from Bio import SeqIO
 from crisviper.logging_config import get_logger

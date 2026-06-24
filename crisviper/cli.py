@@ -23,7 +23,7 @@ os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['MKL_NUM_THREADS'] = '1'
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
 
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 from crisviper import (
     PipelineConfig, QueryRecord,
@@ -32,10 +32,9 @@ from crisviper import (
     read_reference_fasta, read_queries_tsv, read_queries_fasta,
     Pipeline,
     save_alignment_results, save_summary_tables, generate_report,
-    get_amplicon_structure,
     get_logger, setup_logging,
 )
-from crisviper.config import AmpliconConfig, CutsiteRegion, load_yaml_config, cutsites_from_list
+from crisviper.config import AmpliconConfig, load_yaml_config, cutsites_from_list
 
 log = get_logger(__name__)
 
@@ -127,7 +126,6 @@ def _build_pipeline_config(args, yaml_data: dict) -> PipelineConfig:
     2. YAML config file pipeline: section values
     3. PipelineConfig class defaults
     """
-    from dataclasses import fields
 
     # Step 1: Start with YAML pipeline section as base
     yaml_pipeline = yaml_data.get('pipeline', {}) if yaml_data else {}

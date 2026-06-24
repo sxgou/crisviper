@@ -87,8 +87,8 @@ def _gen_indel_length_chart(ins_length_reads: dict = None,
         return ""
     max_len = max(all_keys)
     all_lengths = list(range(1, max_len + 1))
-    ins_raw_vals = [ins_counts.get(l, 0) for l in all_lengths]
-    del_raw_vals = [del_counts.get(l, 0) for l in all_lengths]
+    ins_raw_vals = [ins_counts.get(length, 0) for length in all_lengths]
+    del_raw_vals = [del_counts.get(length, 0) for length in all_lengths]
 
     total_ins = sum(ins_counts.values())
     total_del = sum(del_counts.values())
@@ -325,7 +325,6 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
             sq = list(window_ref_bases)
             rf = list(window_ref_bases)
             blk = []
-            w = len(sq)
         # Clip to n_cols, discarding columns beyond reference width
         if len(sq) > n_cols:
             # Fix insertion block coordinates: discard blocks past n_cols
@@ -364,7 +363,6 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
     }
     ins_bg_rgb = _hex_to_rgb('#ffcccc')   # insertion column background
     del_bg_rgb = _hex_to_rgb('#f0f0f0')   # deletion cell background
-    alt_bg_rgb = _hex_to_rgb('#f8f8f8')   # alternating row tint
 
     n_rows = len(top_alleles)
 

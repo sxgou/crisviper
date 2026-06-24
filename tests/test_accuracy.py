@@ -471,12 +471,10 @@ class TestPositionAwareGapPenalty:
 
         # Gap should be near the cutsite
         gap_start = -1
-        gap_end = -1
         for i, c in enumerate(aq):
             if c == '-':
                 if gap_start == -1:
                     gap_start = i
-                gap_end = i
 
         assert gap_start >= 14 or gap_start == -1, \
             f"Gap start position {gap_start} should be near cutsite(15-20)"
