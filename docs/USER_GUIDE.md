@@ -7,7 +7,7 @@
 ```bash
 git clone https://github.com/sxgou/crisviper
 cd crisviper
-pip install -e .
+pip install -e .  (PyPI package coming soon)
 ```
 
 或用 Docker：
@@ -168,7 +168,7 @@ ACGTACGT...
 | `--config` | — | YAML 配置文件（靶标/扩增子结构和管道参数） |
 | `--sample-name` | `sample` | FASTQ 输入时的样本标记名 |
 | `--threads` / `-t` | 1 | 并行进程数 |
-| `--chunk-size` | 500 | 每批处理的序列数；传 0 启用自动计算 |
+| `--chunk-size` | PipelineConfig default: 500 | 每批处理的序列数；传 0 启用自动计算 |
 
 **打分参数：**
 
