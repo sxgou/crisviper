@@ -92,10 +92,14 @@ def _mutation_type_label(mutations: List[Dict]) -> str:
     if not (has_del or has_ins or has_indel or has_sub):
         return "wt"
     parts = []
-    if has_del: parts.append("del")
-    if has_ins: parts.append("ins")
-    if has_indel: parts.append("indel")
-    if has_sub: parts.append("sub")
+    if has_del:
+        parts.append("del")
+    if has_ins:
+        parts.append("ins")
+    if has_indel:
+        parts.append("indel")
+    if has_sub:
+        parts.append("sub")
     return "+".join(parts)
 
 

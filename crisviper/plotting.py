@@ -87,8 +87,8 @@ def _gen_indel_length_chart(ins_length_reads: dict = None,
         return ""
     max_len = max(all_keys)
     all_lengths = list(range(1, max_len + 1))
-    ins_raw_vals = [ins_counts.get(l, 0) for l in all_lengths]
-    del_raw_vals = [del_counts.get(l, 0) for l in all_lengths]
+    ins_raw_vals = [ins_counts.get(length, 0) for length in all_lengths]
+    del_raw_vals = [del_counts.get(length, 0) for length in all_lengths]
 
     total_ins = sum(ins_counts.values())
     total_del = sum(del_counts.values())

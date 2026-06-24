@@ -354,7 +354,8 @@ def affine_gap_alignment(ref_seq: str, query_seq: str,
                       Ix[i - 1, j - 1] + (gap_exit_bonus if use_gap_exit else 0),
                       Iy[i - 1, j - 1] + (gap_exit_bonus if use_gap_exit else 0)]
             state = ['M', 'Ix', 'Iy'][np.argmax(scores)]
-            i -= 1; j -= 1
+            i -= 1
+            j -= 1
         elif state == 'Ix':
             aligned_ref.append('-')
             aligned_query.append(query_seq[j - 1])
@@ -372,9 +373,13 @@ def affine_gap_alignment(ref_seq: str, query_seq: str,
             state = ['M', 'Ix', 'Iy'][np.argmax(scores)]
             i -= 1
     while i > 0:
-        aligned_ref.append(ref_seq[i - 1]); aligned_query.append('-'); i -= 1
+        aligned_ref.append(ref_seq[i - 1])
+        aligned_query.append('-')
+        i -= 1
     while j > 0:
-        aligned_ref.append('-'); aligned_query.append(query_seq[j - 1]); j -= 1
+        aligned_ref.append('-')
+        aligned_query.append(query_seq[j - 1])
+        j -= 1
     aligned_ref = ''.join(reversed(aligned_ref))
     aligned_query = ''.join(reversed(aligned_query))
     stats = calculate_alignment_stats(aligned_ref, aligned_query)
@@ -472,7 +477,8 @@ def affine_gap_alignment_position_aware(
             else:
                 scores = [M[i - 1, j - 1], Ix[i - 1, j - 1], Iy[i - 1, j - 1]]
             state = ['M', 'Ix', 'Iy'][np.argmax(scores)]
-            i -= 1; j -= 1
+            i -= 1
+            j -= 1
         elif state == 'Ix':
             aligned_ref.append('-')
             aligned_query.append(query_seq[j - 1])
@@ -492,9 +498,13 @@ def affine_gap_alignment_position_aware(
             state = ['M', 'Ix', 'Iy'][np.argmax(scores)]
             i -= 1
     while i > 0:
-        aligned_ref.append(ref_seq[i - 1]); aligned_query.append('-'); i -= 1
+        aligned_ref.append(ref_seq[i - 1])
+        aligned_query.append('-')
+        i -= 1
     while j > 0:
-        aligned_ref.append('-'); aligned_query.append(query_seq[j - 1]); j -= 1
+        aligned_ref.append('-')
+        aligned_query.append(query_seq[j - 1])
+        j -= 1
     aligned_ref = ''.join(reversed(aligned_ref))
     aligned_query = ''.join(reversed(aligned_query))
     stats = calculate_alignment_stats(aligned_ref, aligned_query)
