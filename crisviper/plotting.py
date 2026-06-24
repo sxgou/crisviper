@@ -216,6 +216,11 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
                             len(ar) - primer3_len)
         internal_end = max(internal_start, min(internal_end, len(ar)))
         internal_key = aq[internal_start:internal_end]
+        # Guard: empty internal region (short seq) causes key collision -
+        # use full aligned query+ref as discriminator to avoid collapsing
+        # distinct short reads under the same empty key.
+        if not internal_key:
+            internal_key = f"__EMPTY__{ar}|{aq}"
 
         allele_counts[internal_key] = allele_counts.get(internal_key, 0) + rc
         if internal_key not in allele_data:
@@ -260,7 +265,23 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
         col = 0
         in_ins = False
         ins_start = 0
+        limit_reached = False
         for rb, qb in zip(aligned_ref, aligned_query):
+            if limit_reached:
+                # Only process remaining insertion columns after window end
+                if rb == '-' and qb != '-':
+                    if not in_ins:
+                        ins_start = col
+                        in_ins = True
+                    seq.append(qb)
+                    ref.append('')
+                    col += 1
+                else:
+                    if in_ins:
+                        ins_blocks.append((ins_start, col - 1))
+                        in_ins = False
+                    break
+                continue
             if rb != '-':   # Reference has base → normal column
                 if in_ins:
                     ins_blocks.append((ins_start, col - 1))
@@ -271,7 +292,8 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
                     col += 1
                 ref_pos += 1
                 if ref_pos > window_end:
-                    break
+                    limit_reached = True
+                    continue
             elif qb != '-':  # Ref gap, query base → insertion column
                 if window_start <= ref_pos <= window_end:
                     if not in_ins:
@@ -311,10 +333,15 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
             for start, end in blk:
                 if start >= n_cols:
                     continue
-                clipped_blk.append((start, min(end, n_cols - 1)))
+                new_end = min(end, n_cols - 1)
+                truncated = new_end < end
+                clipped_blk.append((start, new_end, truncated))
             sq = sq[:n_cols]
             rf = rf[:n_cols]
             blk = clipped_blk
+        elif blk:
+            # Normalise to 3-tuples (start, end, truncated) for consistent unpacking
+            blk = [(s, e, False) for s, e in blk]
         # Pad to n_cols (alleles shorter than reference get gaps)
         while len(sq) < n_cols:
             sq.append('-')
@@ -456,11 +483,21 @@ def _gen_allele_heatmap(results: List[Dict], ref_seq: str,
         y = n_rows - 0.5 - ai
 
         # Red box marking insertion blocks
-        for start, end in blk:
-            ax.add_patch(plt.Rectangle(
-                (start, y - 0.5), end - start + 1, 1,
-                facecolor='none', edgecolor='#e94560', linewidth=1.5, zorder=5
-            ))
+        for start, end, truncated in blk:
+            if truncated:
+                # Block extends beyond window — omit right border to avoid
+                # a visually clipped frame edge at the window boundary
+                ax.plot([start, start], [y - 0.5, y + 0.5],
+                        color='#e94560', linewidth=1.5, zorder=5)
+                ax.plot([start, end + 1], [y + 0.5, y + 0.5],
+                        color='#e94560', linewidth=1.5, zorder=5)
+                ax.plot([start, end + 1], [y - 0.5, y - 0.5],
+                        color='#e94560', linewidth=1.5, zorder=5)
+            else:
+                ax.add_patch(plt.Rectangle(
+                    (start, y - 0.5), end - start + 1, 1,
+                    facecolor='none', edgecolor='#e94560', linewidth=1.5, zorder=5
+                ))
 
         # Cell text: always show bases, colored by mutation type
         for ci in range(n_cols):

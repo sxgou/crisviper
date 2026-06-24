@@ -19,6 +19,102 @@ from crisviper.logging_config import get_logger
 
 log = get_logger(__name__)
 
+# ═══════════════════════════════════════════════════════════════
+# Extracted helper functions (module-level for testability)
+# ═══════════════════════════════════════════════════════════════
+
+
+def _split_indel(m: Dict) -> List[str]:
+    """Parse an INDEL mutation into a list of independent del/ins descriptions."""
+    ref_base = m.get("ref_base", "")
+    query_base = m.get("query_base", "")
+    ref_pos = m.get("ref_pos", 0)
+    if not ref_base or not query_base:
+        return [f"indel:{ref_pos}-{m.get('length', 1)}bp"]
+    parts = []
+    i = 0
+    while i < len(ref_base):
+        rb = ref_base[i]
+        qb = query_base[i]
+        if rb != '-' and qb == '-':
+            del_start = ref_pos
+            del_len = 0
+            while i < len(ref_base) and ref_base[i] != '-' and query_base[i] == '-':
+                ref_pos += 1
+                del_len += 1
+                i += 1
+            parts.append(f"del:{del_start}-{del_len}bp")
+        elif rb == '-' and qb != '-':
+            ins_start = ref_pos
+            ins_start_idx = i
+            while i < len(ref_base) and ref_base[i] == '-' and query_base[i] != '-':
+                i += 1
+            ins_seq = query_base[ins_start_idx:i]
+            parts.append(f"ins:{ins_start}+{ins_seq}")
+        else:
+            if rb != '-':
+                ref_pos += 1
+            i += 1
+    return parts if parts else [f"indel:{ref_pos}-{m.get('length', 1)}bp"]
+
+
+def _allele_label(mutations: List[Dict]) -> str:
+    """Generate a compact allele label from a list of mutation dicts."""
+    if not mutations:
+        return "wt"
+    parts = []
+    for m in sorted(mutations, key=lambda x: (x.get("ref_pos", 0), x.get("type", ""), x.get("length", 0))):
+        typ = m.get("type", "")
+        pos = m.get("ref_pos", -1)
+        if typ == "deletion":
+            parts.append(f"del:{pos}-{m.get('length', 1)}bp")
+        elif typ == "insertion":
+            seq = m.get('query_base', '')
+            if seq:
+                parts.append(f"ins:{pos}+{seq}")
+            else:
+                parts.append(f"ins:{pos}+{m.get('length', 1)}bp")
+        elif typ == "indel":
+            parts.extend(_split_indel(m))
+        elif typ == "substitution":
+            parts.append(f"sub:{pos}{m.get('ref_base', '?')}>{m.get('query_base', '?')}")
+        else:
+            parts.append(f"{typ}:{pos}")
+    return ";".join(parts) if parts else "wt"
+
+
+def _mutation_type_label(mutations: List[Dict]) -> str:
+    """Classify a list of mutations into a type category label."""
+    has_del = any(m.get("type") == "deletion" for m in mutations)
+    has_ins = any(m.get("type") == "insertion" for m in mutations)
+    has_indel = any(m.get("type") == "indel" for m in mutations)
+    has_sub = any(m.get("type") == "substitution" for m in mutations)
+    if not (has_del or has_ins or has_indel or has_sub):
+        return "wt"
+    parts = []
+    if has_del: parts.append("del")
+    if has_ins: parts.append("ins")
+    if has_indel: parts.append("indel")
+    if has_sub: parts.append("sub")
+    return "+".join(parts)
+
+
+def _mutation_overlaps_target(m: Dict, target_start: int, target_end: int) -> bool:
+    """Check whether a mutation overlaps a target region on the full-length reference.
+
+    Deletion/indel types use span overlap ([pos, pos+len-1] vs [ts, te]).
+    Substitution/insertion types use point-in-region check.
+    """
+    mp = m.get("ref_pos", -1)
+    if mp < 0:
+        return False
+    mt = m.get("type", "")
+    if mt in ("deletion", "indel"):
+        me = mp + m.get("length", 1) - 1
+        return mp <= target_end and me >= target_start
+    else:
+        return target_start <= mp <= target_end
+
 
 def save_summary_tables(results: List[Dict], output_dir: str,
                          ref_seq: str = "", cutsites: Optional[list] = None,
@@ -50,85 +146,17 @@ def save_summary_tables(results: List[Dict], output_dir: str,
             (default 7 = CARLIN linker length).
 
     Returns:
-        Dict with pre-computed statistics for HTML report.
+        Dict with pre-computed statistics for HTML report. Key fields:
+        - editing_efficiency_pct: % of sequences that are mutated (seq-based).
+        - editing_efficiency_reads_pct: % of reads that are mutated (reads-based).
+        - del_length_reads / ins_length_reads: read-weighted length distributions.
+        - per_target: per-target editing stats (reads-weighted).
+        - All other fields match reporting.py generate_report() summary keys.
     """
     os.makedirs(output_dir, exist_ok=True)
     successful = [r for r in results if "error" not in r]
     failed = [r for r in results if "error" in r]
-    total_reads_success = sum(r["readCount"] for r in successful)
-
-    # ── Helper: Parse INDEL events into separate del/ins descriptions ──
-    def _split_indel(m: Dict) -> List[str]:
-        """Parse an INDEL mutation into a list of independent del/ins descriptions."""
-        ref_base = m.get("ref_base", "")
-        query_base = m.get("query_base", "")
-        ref_pos = m.get("ref_pos", 0)
-        if not ref_base or not query_base:
-            return [f"indel:{ref_pos}-{m.get('length', 1)}bp"]
-        parts = []
-        i = 0
-        while i < len(ref_base):
-            rb = ref_base[i]
-            qb = query_base[i]
-            if rb != '-' and qb == '-':
-                del_start = ref_pos
-                del_len = 0
-                while i < len(ref_base) and ref_base[i] != '-' and query_base[i] == '-':
-                    ref_pos += 1
-                    del_len += 1
-                    i += 1
-                parts.append(f"del:{del_start}-{del_len}bp")
-            elif rb == '-' and qb != '-':
-                ins_start = ref_pos
-                ins_start_idx = i
-                while i < len(ref_base) and ref_base[i] == '-' and query_base[i] != '-':
-                    i += 1
-                ins_seq = query_base[ins_start_idx:i]
-                parts.append(f"ins:{ins_start}+{ins_seq}")
-            else:
-                if rb != '-':
-                    ref_pos += 1
-                i += 1
-        return parts if parts else [f"indel:{ref_pos}-{m.get('length', 1)}bp"]
-
-    def _allele_label(mutations: List[Dict]) -> str:
-        """Generate a compact allele label from a list of mutation dicts."""
-        if not mutations:
-            return "wt"
-        parts = []
-        for m in sorted(mutations, key=lambda x: (x.get("ref_pos", 0), x.get("type", ""), x.get("length", 0))):
-            typ = m.get("type", "")
-            pos = m.get("ref_pos", -1)
-            if typ == "deletion":
-                parts.append(f"del:{pos}-{m.get('length', 1)}bp")
-            elif typ == "insertion":
-                seq = m.get('query_base', '')
-                if seq:
-                    parts.append(f"ins:{pos}+{seq}")
-                else:
-                    parts.append(f"ins:{pos}+{m.get('length', 1)}bp")
-            elif typ == "indel":
-                parts.extend(_split_indel(m))
-            elif typ == "substitution":
-                parts.append(f"sub:{pos}{m.get('ref_base', '?')}>{m.get('query_base', '?')}")
-            else:
-                parts.append(f"{typ}:{pos}")
-        return ";".join(parts) if parts else "wt"
-
-    def _mutation_type_label(mutations: List[Dict]) -> str:
-        """Classify a list of mutations into a type category label."""
-        has_del = any(m.get("type") == "deletion" for m in mutations)
-        has_ins = any(m.get("type") == "insertion" for m in mutations)
-        has_indel = any(m.get("type") == "indel" for m in mutations)
-        has_sub = any(m.get("type") == "substitution" for m in mutations)
-        if not (has_del or has_ins or has_indel or has_sub):
-            return "wt"
-        parts = []
-        if has_del: parts.append("del")
-        if has_ins: parts.append("ins")
-        if has_indel: parts.append("indel")
-        if has_sub: parts.append("sub")
-        return "+".join(parts)
+    total_reads_success = sum(r.get("readCount", 1) for r in successful)
 
     # ═══════════════════════════════════════════════════════════════
     # 1. allele_frequency.tsv
@@ -165,22 +193,6 @@ def save_summary_tables(results: List[Dict], output_dir: str,
     # ═══════════════════════════════════════════════════════════════
     # 2. per_target_editing.tsv
     # ═══════════════════════════════════════════════════════════════
-    def _mutation_overlaps_target(m: Dict, target_start: int, target_end: int) -> bool:
-        """Check whether a mutation overlaps a target region on the full-length reference.
-
-        Deletion/indel types use span overlap ([pos, pos+len-1] vs [ts, te]).
-        Substitution/insertion types use point-in-region check.
-        """
-        mp = m.get("ref_pos", -1)
-        if mp < 0:
-            return False
-        mt = m.get("type", "")
-        if mt in ("deletion", "indel"):
-            me = mp + m.get("length", 1) - 1
-            return mp <= target_end and me >= target_start
-        else:
-            return target_start <= mp <= target_end
-
     def _is_intrasite(m: Dict, intervals: list) -> bool:
         """Determine if a del/indel mutation is entirely within a single 27bp target region.
 
@@ -386,7 +398,7 @@ def save_summary_tables(results: List[Dict], output_dir: str,
             mutated_reads += rc
     unmutated_seqs = len(successful) - mutated_seqs
     unmutated_reads = total_reads_success - mutated_reads
-    total_reads_all = sum(r["readCount"] for r in results)
+    total_reads_all = sum(r.get("readCount", 1) for r in results)
 
     # ═══════════════════════════════════════════════════════════════
     # 7. read_to_allele.tsv (when original_read_names are available)

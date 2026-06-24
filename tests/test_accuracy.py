@@ -11,6 +11,7 @@ import sys
 import os
 import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from crisviper import (
     Pipeline, PipelineConfig, QueryRecord,
@@ -24,47 +25,7 @@ from crisviper import (
     MutationEvent, MutationType,
 )
 
-# ═══════════════════════════════════════════════════════════════
-# Standard CARLIN reference sequence (332bp)
-# ═══════════════════════════════════════════════════════════════
-CARLIN_REF = (
-    "TATGTGTGGGAGGGCTAAGAGG"   # Primer5 (23bp)
-    "CCGCC"                     # Prefix (5bp)
-    "GACTGCACGACAGTCGA"         # Target1: conserved region 13bp + cutsite 7bp
-    "CGATGGAG"                  # Linker (7bp)
-    "TCGACACGACTCGCGCA"         # Target2
-    "TACGATGG"                  # Linker
-    "AGTCGACTACAGTCGCTA"        # Target3
-    "CGACGATG"                  # Linker
-    "GAGTCGCGAGCGCTATG"         # Target4
-    "AGCGACTA"                  # Linker
-    "TGGAGTCGATACGATACG"        # Target5
-    "CGCACGCT"                  # Linker
-    "ATGGAGTCGAGAGCGCGC"        # Target6
-    "TCGTCAAC"                  # Linker
-    "GATGGAGTCGCGACTGTA"        # Target7
-    "CGCACTCG"                  # Linker
-    "CGATGGAGTCGATAGTAT"        # Target8
-    "GCGTACAC"                  # Linker
-    "GCGATGGAGTCGACTGCA"        # Target9
-    "CGACAGTC"                  # Linker
-    "GACTATGGAGTCGATACGTAGC"    # Target10
-    "ACGCACATGATGGGAGCTAGCTGTGCCTTCTAGTTGCCAGCCATCTGTTGT"  # Postfix(8) + Primer3(33)
-)
-
-# Cutsite coordinates on the full-length reference sequence (0-indexed, inclusive)
-CUTSITES = [
-    CutsiteRegion("Target1",  41,  47),
-    CutsiteRegion("Target2",  68,  74),
-    CutsiteRegion("Target3",  95, 101),
-    CutsiteRegion("Target4", 122, 128),
-    CutsiteRegion("Target5", 149, 155),
-    CutsiteRegion("Target6", 176, 182),
-    CutsiteRegion("Target7", 203, 209),
-    CutsiteRegion("Target8", 230, 236),
-    CutsiteRegion("Target9", 257, 263),
-    CutsiteRegion("Target10", 284, 290),
-]
+from shared import CARLIN_REF
 
 
 # ═══════════════════════════════════════════════════════════════

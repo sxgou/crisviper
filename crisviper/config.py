@@ -66,7 +66,7 @@ class AmpliconConfig:
     def from_json(cls, path: str) -> "AmpliconConfig":
         """Load configuration from a JSON file."""
         import json
-        with open(path) as f:
+        with open(path, encoding='utf-8') as f:
             data = json.load(f)
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
@@ -93,7 +93,7 @@ def load_yaml_config(path: str) -> dict:
     except ImportError:
         raise ImportError("PyYAML is required. Install with: pip install pyyaml")
     try:
-        with open(path) as f:
+        with open(path, encoding='utf-8') as f:
             data = yaml.safe_load(f)
         return data if isinstance(data, dict) else {}
     except FileNotFoundError:
@@ -108,11 +108,30 @@ def cutsites_from_list(data: list) -> List["CutsiteRegion"]:
     for i, entry in enumerate(data):
         if not isinstance(entry, dict):
             continue
+        start = entry.get("start")
+        if start is None:
+            raise ValueError(
+                f"Cutsite entry {i+1} ('{entry.get('name', 'unnamed')}') "
+                f"missing required field 'start'"
+            )
+        end = entry.get("end")
+        if end is None:
+            raise ValueError(
+                f"Cutsite entry {i+1} ('{entry.get('name', 'unnamed')}') "
+                f"missing required field 'end'"
+            )
+        try:
+            start_int = int(start)
+            end_int = int(end)
+        except (ValueError, TypeError) as e:
+            raise ValueError(
+                f"Cutsite entry {i+1} ('{entry.get('name', 'unnamed')}'): "
+                f"start and end must be integers, got start={start!r}, end={end!r}"
+            ) from e
         result.append(CutsiteRegion(
             name=entry.get("name", f"Target{i+1}"),
-            start=entry["start"],
-            end=entry["end"],
+            start=start_int,
+            end=end_int,
         ))
     return result
-
 

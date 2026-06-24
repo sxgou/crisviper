@@ -87,20 +87,30 @@ def _build_score_matrix(ref_seq: str, query_seq: str,
 
     # Base substitution score
     if mismatch_penalty_profile is not None:
-        mpp = mismatch_penalty_profile[:m] if len(mismatch_penalty_profile) >= m else mismatch_penalty_profile
+        if len(mismatch_penalty_profile) < m:
+            raise ValueError(
+                f"mismatch_penalty_profile length ({len(mismatch_penalty_profile)}) "
+                f"must be >= ref length ({m})"
+            )
+        mpp = mismatch_penalty_profile[:m]
         sub_score = np.where(is_match, match_score, mpp[:, None])
     else:
         sub_score = np.where(is_match, float(match_score), float(mismatch_penalty))
 
     # Homology penalty: subtract from match positions
     if homology_profile is not None:
-        hp = homology_profile[:m] if len(homology_profile) >= m else homology_profile
+        if len(homology_profile) < m:
+            raise ValueError(
+                f"homology_profile length ({len(homology_profile)}) "
+                f"must be >= ref length ({m})"
+            )
+        hp = homology_profile[:m]
         if (hp < 0).any():
             sub_score = sub_score + hp[:, None] * is_match
 
     # Short-match discount on run lengths
     short_match_active = (short_match_window > 0 and short_match_discount < 1.0)
-    needs_run_len = short_match_active or dense_mismatch_active or gap_exit_bonus != 0.0 or isolated_base_penalty < 0.0
+    needs_run_len = short_match_active or isolated_base_penalty < 0.0
     run_len = None
     if needs_run_len:
         run_len = np.zeros((m + 1, n + 1), dtype=np.int32)
@@ -133,6 +143,8 @@ def _compute_run_len_numba(is_match, run_len, m, n):
 
 
 def _compute_run_len(is_match: np.ndarray, run_len: np.ndarray, m: int, n: int) -> None:
+    """Wrapper for numba-JIT _compute_run_len_numba. Indirection allows clean fallback
+    when numba is unavailable and simplifies future testing/mocking."""
     _compute_run_len_numba(is_match, run_len, m, n)
 
 
@@ -161,7 +173,7 @@ def _dense_mm_density_numba(is_match, m, n, window):
                 win_sum += 1
 
         for k in range(length):
-            denom = min(k + half_w + 1, length - k + half_w, window)
+            denom = min(k + half_w + 1, length - k + half_w, 2 * half_w + 1)
             density[i0 + k, j0 + k] = win_sum / max(denom, 1)
 
             # Slide window: remove k-half_w, add k+half_w+1
@@ -177,6 +189,8 @@ def _dense_mm_density_numba(is_match, m, n, window):
 
 def _compute_dense_mismatch_density(is_match: np.ndarray, m: int, n: int,
                                     window: int) -> np.ndarray:
+    """Wrapper for numba-JIT _dense_mm_density_numba. Indirection allows clean fallback
+    when numba is unavailable and simplifies future testing/mocking."""
     return _dense_mm_density_numba(is_match, m, n, window)
 
 
@@ -326,9 +340,10 @@ def affine_gap_alignment(ref_seq: str, query_seq: str,
         use_isolated_base, isolated_base_penalty,
     )
 
-    # Global alignment: only M[m, n] is valid at termination
-    max_score = M[m, n]
-    state = 'M'
+    # Global alignment: choose the best state at termination (M, Ix, or Iy)
+    state_scores = [M[m, n], Ix[m, n], Iy[m, n]]
+    max_score = max(state_scores)
+    state = ['M', 'Ix', 'Iy'][np.argmax(state_scores)]
     i, j = m, n
     aligned_ref, aligned_query = [], []
     while i > 0 and j > 0:
@@ -438,9 +453,10 @@ def affine_gap_alignment_position_aware(
                    geb_profile, use_profile_geb, gap_exit_bonus)
 
     # ── Backtrace ──
-    # Global alignment: only M[m, n] is valid at termination
-    max_score = M[m, n]
-    state = 'M'
+    # Global alignment: choose the best state at termination (M, Ix, or Iy)
+    state_scores = [M[m, n], Ix[m, n], Iy[m, n]]
+    max_score = max(state_scores)
+    state = ['M', 'Ix', 'Iy'][np.argmax(state_scores)]
     i, j = m, n
     aligned_ref, aligned_query = [], []
     while i > 0 and j > 0:

@@ -1,0 +1,80 @@
+# crisviper 管道配置文件
+# 用法: crisviper align --config crisviper_config.yaml --reference ref.fa --queries q.tsv --output results
+#
+# 命令行参数优先级更高：同时指定 YAML 和 CLI 参数时，CLI 值覆盖 YAML 值。
+
+# ─── 扩增子结构（Target 配置） ──────────────────────────────────────
+# 定义参考序列中靶点（Target）的布局结构，影响 cutsite 自动检测。
+amplicon:
+  primer5_len: 23          # 5' 端引物长度 (bp)
+  primer3_len: 33          # 3' 端引物长度 (bp)
+  prefix: "CGCCG"          # 5' 前缀序列
+  postfix_len: 8           # 3' 后缀长度
+  target_size: 20          # 每个 Target 长度 (bp)
+  linker_size: 7           # Target 间 Linker 长度
+  n_targets: 10            # Target 数量
+  cutsite_offset: 13       # Target 内 cutsite 起始偏移
+  cutsite_len: 7           # cutsite 长度
+  dual_anchor_tolerance: 4 # 双端锚定容许错配数
+
+# ─── Cutsite 坐标（可选，显式指定，优先于自动检测） ──────────────────
+# 如果不想依赖自动检测，可以在这里明确列出每个靶点的 cutsite 位置。
+# cutsites:
+#   - name: Target1
+#     start: 30
+#     end: 36
+#   - name: Target2
+#     start: 57
+#     end: 63
+#   - name: Target3
+#     start: 84
+#     end: 90
+#   # ...（以此类推）
+
+# ─── 管道参数（可选，CLI 参数优先级更高） ──────────────────────────
+pipeline:
+  # 比对参数
+  match_score: 2.0
+  mismatch_penalty: -3.0
+  gap_open: -2.0
+  gap_extend: -0.1
+
+  # 谱系示踪模式
+  lineage_mode: false
+  min_scale: 1.0
+  max_scale: 6.0
+  cutsite_edge_scale: 2.0
+  gradient_radius: null       # null=自动计算
+  sub_window: 3
+  mismatch_density_threshold: 0.34
+
+  # 高级比对参数
+  gap_exit_strength: 0.0
+  short_match_window: 0
+  short_match_discount: 1.0
+  dense_mismatch_window: 6
+  dense_mismatch_penalty: 0.0
+  homology_window: 8
+  homology_penalty: 0.0
+  isolated_base_penalty: 0.0
+
+  # 引物参数
+  primer5_len: 23
+  primer3_len: 33
+  primer5_threshold: 19
+  primer3_threshold: 29
+
+  # Allele 过滤
+  min_reads_sub: 5
+  min_reads_indel: 0
+  correct_bg_sub: true
+  keep_sub_indel_window: 3
+
+  # 多线程
+  threads: 1
+
+  # 报告
+  report_format: html
+  allele_top_n: 50
+  allele_window_start: 0
+  allele_window_end: null

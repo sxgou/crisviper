@@ -124,17 +124,18 @@ class TestExtractMutations:
                 assert not m.in_cutsite_window
 
     def test_complex_indel_adjacent(self):
-        """Adjacent insertion + deletion merged into a complex event"""
-        # This is an edge case that may or may not merge
-        # Test that complex events can form
+        """Adjacent deletion + insertion merge into a single INDEL event."""
         ar = "ACGT--AC"
-        aq = "AC--GGAC"  # DEL at pos 3-4 (GT), INS at pos 5-6 (GG)
+        aq = "AC--GGAC"  # DEL(GT) at ref_pos=2-3, INS(GG) at ref_pos=4-5
         mutations = extract_mutations(ar, aq)
-        # May be merged or separate depending on adjacency calculation
-        assert len(mutations) >= 1
-        # Should at least detect both indels somehow
-        types = {m.type for m in mutations}
-        assert MutationType.DELETION in types or MutationType.INDEL in types
+        assert len(mutations) == 1, f"Expected 1 merged INDEL, got {len(mutations)}"
+        m = mutations[0]
+        assert m.type == MutationType.INDEL, f"Expected INDEL, got {m.type.name}"
+        assert m.ref_pos == 2, f"Expected ref_pos=2, got {m.ref_pos}"
+        assert m.length == 2, f"Expected length=2, got {m.length}"
+        # INDEL merged event should carry ref/query bases from both sides
+        assert len(m.ref_base) == len(m.query_base), \
+            f"ref_base and query_base should be aligned, got {len(m.ref_base)} vs {len(m.query_base)}"
 
     def test_ref_pos_mapping(self):
         """ref_pos correctly points to reference sequence coordinates"""

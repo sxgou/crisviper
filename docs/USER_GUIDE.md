@@ -168,7 +168,7 @@ ACGTACGT...
 | `--config` | — | YAML 配置文件（靶标/扩增子结构和管道参数） |
 | `--sample-name` | `sample` | FASTQ 输入时的样本标记名 |
 | `--threads` / `-t` | 1 | 并行进程数 |
-| `--chunk-size` | auto | 每批处理的序列数，自动计算 |
+| `--chunk-size` | 500 | 每批处理的序列数；传 0 启用自动计算 |
 
 **打分参数：**
 
@@ -240,10 +240,10 @@ ACGTACGT...
 | Option | Default | Description / 说明 |
 |--------|---------|-------------|
 | `--report` | — | 生成报告：`json` 或 `html` |
-| `--report-output` | auto | 报告路径（默认从 `--output` 推断） |
+| `--report-output` | 从 `--output` 推断 | 报告路径（去除扩展名 + `_report` 后缀） |
 | `--allele-top-n` | 50 | 报告中展示的 top N alleles |
 | `--allele-window-start` | 0 | Allele 热图显示起始位置 |
-| `--allele-window-end` | auto | Allele 热图显示结束位置（含） |
+| `--allele-window-end` | end of reference | Allele 热图显示结束位置（含，0-indexed） |
 
 ---
 

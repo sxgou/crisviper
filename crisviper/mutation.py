@@ -247,8 +247,8 @@ def extract_mutations(
                 ref_base=seg_ref,
                 query_base='-' * length,
                 length=length,
-                in_cutsite_window=_in_any_cutsite_window(ref_start, cutsites, sub_window) or \
-                              _in_any_cutsite_window(ref_end - 1, cutsites, sub_window) if cutsites else True,
+                in_cutsite_window=(_in_any_cutsite_window(ref_start, cutsites, sub_window) or
+                                  _in_any_cutsite_window(ref_end - 1, cutsites, sub_window)) if cutsites else True,
                 raw_ref_segment=seg_ref,
                 raw_query_segment='-' * length,
             )
@@ -334,9 +334,9 @@ def _merge_adjacent_indels(events: List[MutationEvent]) -> List[MutationEvent]:
         return events
 
     def exclusive_end(e: MutationEvent) -> int:
-        if e.type == MutationType.DELETION:
+        if e.type in (MutationType.DELETION, MutationType.INDEL):
             return e.ref_pos + e.length
-        return e.ref_pos + 1  # INS and SUB don't span ref positions
+        return e.ref_pos + 1  # INS, SUB: single ref position
 
     def intervals_adjacent(a: MutationEvent, b: MutationEvent) -> bool:
         a_end = exclusive_end(a)

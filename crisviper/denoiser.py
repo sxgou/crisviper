@@ -27,7 +27,8 @@ def directional_adjacency_top_down_denoiser(
         tag_map[i] = index of the parent (representative) tag for tag i.
     """
     N = len(tags)
-    assert len(weights) == N
+    if len(weights) != N:
+        raise ValueError(f"Number of weights ({len(weights)}) does not match number of tags ({N})")
     if exclude is None:
         exclude = np.zeros(N, dtype=bool)
 
@@ -38,17 +39,20 @@ def directional_adjacency_top_down_denoiser(
     for i in order:
         if tag_map[i] == -1:
             tag_map[i] = i
-        # unassigned, same-length, not-excluded, weight within 2x
+        # Candidate: unassigned sibling with same length, weight within ~2x,
+        # and not explicitly excluded from being a child.
         candidates = np.where(
-            (weights[i] >= 2 * weights - 1)
-            & (tag_map == -1)
-            & (lengths == lengths[i])
-            & ~exclude
+            (weights[i] >= 2 * weights - 1)  # weight[i] within ~2x of candidate
+            & (tag_map == -1)                 # not yet assigned
+            & (lengths == lengths[i])         # same length
+            & ~exclude                        # not excluded
         )[0]
         if len(candidates) == 0:
             continue
         tag_i = tags[i]
         for c in candidates:
+            if len(tag_i) != len(tags[c]):
+                continue
             hd = sum(a != b for a, b in zip(tag_i, tags[c]))
             if hd == 1:
                 tag_map[c] = tag_map[i]

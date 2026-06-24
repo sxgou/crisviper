@@ -94,6 +94,8 @@ def _check_primer_quality(
                    if ar[i] != '-' and aq[i] != '-' and ar[i] == aq[i])
 
     # 3' primer region: ref positions total-p3..total-1
+    # The trailing columns beyond total-1 are excluded by the ar[i] != '-' and
+    # aq[i] != '-' filters (Iy termination → aq gap, Ix termination → ar gap).
     p3_start = next((i for i, p in enumerate(pos_map) if p == total - p3), None)
     if p3_start is None:
         return False, p5_match, False, 0
@@ -203,7 +205,7 @@ def correct_background_substitutions(
 
     Args:
         ar_int: Internal-region aligned reference (with gaps).
-        aq_int: Internal-region aligned query (with gaps), modified in-place.
+        aq_int: Internal-region aligned query (with gaps).
         cutsites: Cutsite regions (already adjusted to internal coordinates).
         sub_window: Cutsite-adjacent retention window (bp).
         keep_sub_indel_window: Indel-adjacent retention window (bp).
@@ -634,8 +636,8 @@ def _assemble_full_length(
     sequences to avoid allele fragmentation caused by primer-region
     mutations in the query.
     """
-    aligned_ref = r_seq[:p5] + ar_int + r_seq[-p3:]
-    aligned_query = r_seq[:p5] + aq_int + r_seq[-p3:]
+    aligned_ref = r_seq[:p5] + ar_int + (r_seq[-p3:] if p3 > 0 else "")
+    aligned_query = r_seq[:p5] + aq_int + (r_seq[-p3:] if p3 > 0 else "")
     return aligned_ref, aligned_query
 
 
@@ -812,13 +814,18 @@ class Pipeline:
                         cutsites=self.cutsites,
                     )
                     future_to_idx = {executor.submit(chunk_func, ch): i for i, ch in enumerate(chunks)}
+                    bpp_seen = False
                     for future in as_completed(future_to_idx):
                         idx = future_to_idx[future]
                         try:
                             results.extend(future.result())
                             processed_indices.add(idx)
+                        except BrokenProcessPool:
+                            log.error("  Chunk %d: process pool broken, will reprocess", idx)
+                            bpp_seen = True
+                            break
                         except Exception as e:
-                            log.error("  Chunk %d failed (skipping): %s", idx, e)
+                            log.error("  Chunk %d failed, will reprocess: %s", idx, e)
             except BrokenProcessPool:
                 log.warning("ProcessPoolExecutor crashed (BrokenProcessPool), reprocessing remaining chunks")
 

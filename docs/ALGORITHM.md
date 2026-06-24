@@ -46,8 +46,7 @@ $$
 
 $s(x_i, y_j)$ 是替换得分矩阵，match_score 或 mismatch_penalty。
 
-**半全局**（默认）：首行首列初始化为 0，不惩罚序列两端的 gap。
-**全局**（`--global`）：标准 Needleman-Wunsch 初始化。
+**半全局**（默认）：首行首列初始化为 0，不惩罚序列两端的 gap。仅支持半全局模式，不提供 --global 选项。
 
 ---
 
@@ -65,11 +64,11 @@ $$
 g_o(p) = g_o^{\text{base}} \times s(p), \quad g_e(p) = g_e^{\text{base}} \times s(p)
 $$
 
-与传统的离散区域划分不同，谱系模式使用基于高斯核的**连续梯度**。每个 cutsite 的位置因子由三部分叠加决定：
+与传统的离散区域划分不同，谱系模式使用基于 smoothstep 的**连续梯度**。每个 cutsite 的位置因子由三部分叠加决定：
 
 1. **Cutsite 中心**：惩罚最低（`--min-scale`，默认 1.0），鼓励在切割位点开 gap
-2. **边界衰减**：以高斯函数 $\exp(-d^2 / 2\sigma^2)$ 从中心向外衰减，$\sigma$ 由 `--gradient-radius` 控制（默认自动计算）
-3. **Cutsite 边界**：叠加 `--cutsite-edge-scale`（默认 2.0）倍率的窄高斯峰，抑制边界附近的不精确 indel
+2. **边界衰减**：以平滑步进函数 $\operatorname{smoothstep}(t)=3t^2-2t^3$ 在 $[0,1]$ 区间内从最小惩罚过渡到最大惩罚，渐变半径由 `--gradient-radius` 控制（默认自动计算）
+3. **Cutsite 边界**：叠加 `--cutsite-edge-scale`（默认 2.0）倍率的平滑峰，抑制边界附近的不精确 indel
 
 保守区惩罚平滑过渡到 `--max-scale`（默认 6.0），避免离散区域边界处的突变效应。
 
@@ -86,12 +85,12 @@ $$
 非标准结构通过 `--cutsites` 传入 JSON：
 
 ```json
-{"cutsites": [
+[
   {"name": "Target1", "start": 41, "end": 47}
-]}
+]
 ```
 
-坐标 0-based、inclusive。
+坐标 0-based、inclusive。注：也接受 `{"cutsites": [...]}` 包装格式。
 
 ### DP-native features / DP 原生特征
 

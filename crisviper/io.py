@@ -35,7 +35,11 @@ def _read_fastq_counts(fastq_path: str) -> Dict[str, int]:
 
 
 def _read_fastq_groups(fastq_path: str) -> Dict[str, List[str]]:
-    """Read a FASTQ file and return {sequence: [read_name, ...]} preserving original read names."""
+    """Read a FASTQ file and return {sequence: [read_name, ...]} preserving original read names.
+
+    Note: For large FASTQ files (millions of reads), this keeps all read names in memory.
+    Consider memory constraints when enabling keep_read_names with high-depth datasets.
+    """
     groups = {}
     if fastq_path.endswith('.gz'):
         with gzip.open(fastq_path, 'rt') as f:
@@ -64,6 +68,8 @@ def fastq_to_dataframe(fastq_path: str, sample_name: str = "sample",
         fastq_path: Path to FASTQ file (supports .gz compression).
         sample_name: Sample name for read labeling.
         keep_read_names: Whether to preserve original read names.
+            Note: enabling this keeps all read names in memory, which may
+            consume significant memory on large datasets.
 
     Returns:
         List of dicts with keys: readName, cellBC, UMI, readCount, seq.
@@ -272,7 +278,11 @@ def merge_paired_end(
 
 def save_tsv(rows: List[Dict], output_path: str) -> None:
     """Save a list of row dicts to a TSV file."""
-    fieldnames = ["readName", "cellBC", "UMI", "readCount", "seq"]
+    if not rows:
+        log.warning("No rows to save, writing empty TSV to %s", output_path)
+        fieldnames = ["readName", "cellBC", "UMI", "readCount", "seq"]
+    else:
+        fieldnames = list(rows[0].keys())
     with open(output_path, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter='\t')
         writer.writeheader()
@@ -307,6 +317,9 @@ def read_queries_tsv(tsv_path: str) -> List[Dict]:
                     log.warning("Line %d missing sequence field, skipping", line_num)
                     continue
                 row['seq'] = row['seq'].upper()
+                for key in ('readName', 'cellBC', 'UMI'):
+                    if key in row:
+                        row[key] = row[key].strip()
                 row['readCount'] = int(row.get('readCount', 1))
                 rows.append(row)
     except Exception as e:
@@ -429,14 +442,18 @@ def parse_10x_fastq(
     r1_records = list(SeqIO.parse(_maybe_gzopen(r1_fastq), "fastq"))
     r2_records = list(SeqIO.parse(_maybe_gzopen(r2_fastq), "fastq"))
 
-    assert len(r1_records) == len(r2_records), \
-        f"R1 ({len(r1_records)}) and R2 ({len(r2_records)}) have different read counts"
+    if len(r1_records) != len(r2_records):
+        raise ValueError(
+            f"R1 ({len(r1_records)}) and R2 ({len(r2_records)}) have different read counts"
+        )
 
     N = len(r1_records)
     raw_cb = [str(r.seq) for r in r1_records]
     # Convert Phred quality scores (list of ints) to proper ASCII quality strings
     # r.letter_annotations["phred_quality"] returns e.g. [40, 30, 20, ...]
-    # We encode as ASCII: chr(score + 33) per the Sanger FASTQ standard
+    # We encode as ASCII: chr(score + 33) per the Sanger/Illumina 1.8+ FASTQ standard.
+    # Note: Phred+64 (Illumina 1.3/1.5) is NOT supported; encountering such files
+    # will produce garbage quality strings.
     raw_qc = ["".join(chr(q + 33) for q in r.letter_annotations["phred_quality"])
               for r in r1_records]
     raw_seq = [str(r.seq) for r in r2_records]
@@ -526,7 +543,7 @@ def filter_sc_cbs_and_umis(
 
     # Quality score >= min_qscore
     masks_raw["good_CB_UMI_QC"] = [
-        all(ord(c) - 33 >= min_qscore for c in qcs[i])
+        len(qcs[i]) > 0 and all(ord(c) - 33 >= min_qscore for c in qcs[i])
         for i in range(N)
     ]
 

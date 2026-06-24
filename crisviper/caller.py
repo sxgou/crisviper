@@ -89,7 +89,11 @@ def _majority_consensus(sequences: List[str], weights: List[int]) -> str:
     if not sequences:
         return ""
     L = len(sequences[0])
-    assert all(len(s) == L for s in sequences)
+    if not all(len(s) == L for s in sequences):
+        raise ValueError(
+            f"Majority consensus requires all sequences to have the same length, "
+            f"got lengths {set(len(s) for s in sequences)}"
+        )
     consensus = []
     for col in range(L):
         col_weights: dict = {}
@@ -100,7 +104,54 @@ def _majority_consensus(sequences: List[str], weights: List[int]) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Callers
+# Shared allele calling helper
+# ═══════════════════════════════════════════════════════════════
+
+def _call_alleles_by_key(
+    valid: List[AlignmentResult],
+    keys: List[str],
+    dominant_frac: float,
+) -> List[CalledAllele]:
+    """Group results by key, filter by dominant_frac, build consensus.
+
+    Args:
+        valid: Filtered list of successful alignment results.
+        keys: Grouping key per result.
+        dominant_frac: Minimum weight fraction to keep an allele.
+
+    Returns:
+        List of CalledAllele objects sorted by weight descending.
+    """
+    unique_keys, sorted_weights, reverse_index = _unique_by_freq(
+        keys, [r.query.readCount for r in valid]
+    )
+    total_weight = sum(r.query.readCount for r in valid)
+    if not unique_keys:
+        return []
+
+    alleles = []
+    for i, (key, key_weight) in enumerate(zip(unique_keys, sorted_weights)):
+        if key_weight / total_weight <= dominant_frac:
+            break
+        idx = [j for j, ri in enumerate(reverse_index) if ri == i]
+        group = [valid[j] for j in idx]
+        group_weights = [r.query.readCount for r in group]
+        consensus_aq = _majority_consensus(
+            [r.aligned_query for r in group], group_weights
+        )
+        alleles.append(CalledAllele(
+            sequence=consensus_aq.replace("-", ""),
+            aligned_sequence=consensus_aq,
+            weight=key_weight,
+            n_sequences=len(group),
+            event_structure=key,
+            mutations=group[0].mutations,
+        ))
+    return alleles
+
+
+# ═══════════════════════════════════════════════════════════════
+# Public callers
 # ═══════════════════════════════════════════════════════════════
 
 def call_alleles_coarse_grain(
@@ -123,48 +174,8 @@ def call_alleles_coarse_grain(
     valid = [r for r in results if r.success and r.stats]
     if not valid:
         return []
-
     keys = [_event_structure(r.mutations) for r in valid]
-    weights = [r.query.readCount for r in valid]
-
-    unique_keys, sorted_weights, reverse_index = _unique_by_freq(keys, weights)
-    total_weight = sum(weights)
-
-    if not unique_keys:
-        return []
-
-    alleles = []
-
-    # Only keep groups strictly above dominant_frac (matching MATLAB behavior)
-    for i, (key, key_weight) in enumerate(zip(unique_keys, sorted_weights)):
-        if key_weight / total_weight <= dominant_frac:
-            break
-        idx = [j for j, ri in enumerate(reverse_index) if ri == i]
-        group = [valid[j] for j in idx]
-        group_weights = [valid[j].query.readCount for j in idx]
-
-        # Build consensus from aligned query sequences
-        aligned_queries = [r.aligned_query for r in group]
-        consensus_aq = _majority_consensus(aligned_queries, group_weights)
-
-        # Full-length sequence (strip gaps from aligned query)
-        full_seq = consensus_aq.replace("-", "")
-
-        alleles.append(CalledAllele(
-            sequence=full_seq,
-            aligned_sequence=consensus_aq,
-            weight=key_weight,
-            n_sequences=len(group),
-            event_structure=key,
-            mutations=group[0].mutations,
-        ))
-
-        # Continue checking remaining groups; groups are sorted by descending
-        # weight so the 'key_weight / total_weight <= dominant_frac' check
-        # above will naturally terminate when no more groups dominate.
-        continue
-
-    return alleles
+    return _call_alleles_by_key(valid, keys, dominant_frac)
 
 
 def call_alleles_exact(
@@ -186,42 +197,11 @@ def call_alleles_exact(
     valid = [r for r in results if r.success and r.stats]
     if not valid:
         return []
-
     keys = [r.aligned_query for r in valid]
-    weights = [r.query.readCount for r in valid]
-
     if not all(keys):
         return []
-
-    unique_keys, sorted_weights, reverse_index = _unique_by_freq(keys, weights)
-    total_weight = sum(weights)
-
-    alleles = []
-    if not unique_keys:
-        return alleles
-
-    for i, (key, key_weight) in enumerate(zip(unique_keys, sorted_weights)):
-        if key_weight / total_weight <= dominant_frac:
-            break
-        idx = [j for j, ri in enumerate(reverse_index) if ri == i]
-        group_keys = [valid[j].aligned_query for j in idx]
-        group_weights = [valid[j].query.readCount for j in idx]
-
-        consensus_aq = _majority_consensus(group_keys, group_weights) if len(group_keys) > 1 else group_keys[0]
-        full_seq = consensus_aq.replace("-", "")
-
-        alleles.append(CalledAllele(
-            sequence=full_seq,
-            aligned_sequence=consensus_aq,
-            weight=key_weight,
-            n_sequences=len(group_keys),
-            event_structure=_event_structure(valid[idx[0]].mutations),
-            mutations=valid[idx[0]].mutations,
-        ))
-
-        # Continue checking remaining groups; groups are sorted by descending
-        # weight so the 'key_weight / total_weight <= dominant_frac' check
-        # above will naturally terminate when no more groups dominate.
-        continue
-
+    # Keys are aligned queries; event_structure derived from mutation events
+    alleles = _call_alleles_by_key(valid, keys, dominant_frac)
+    for a in alleles:
+        a.event_structure = _event_structure(a.mutations)
     return alleles

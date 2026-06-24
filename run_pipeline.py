@@ -2,6 +2,9 @@
 import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Use available CPUs, cap at 12 for reasonable parallelism
+CPU_COUNT = min(12, os.cpu_count() or 1)
+
 from crisviper import (
     PipelineConfig, Pipeline, QueryRecord,
     read_reference_fasta, fastq_to_dataframe, get_amplicon_structure,
@@ -47,7 +50,7 @@ def main():
         dense_mismatch_penalty=-2.0,
         homology_penalty=-1.0,
         isolated_base_penalty=-2.0,
-        threads=12,
+        threads=CPU_COUNT,
     )
     pipeline_l = Pipeline(config_l, ref_seq)
     t0 = time.time()
