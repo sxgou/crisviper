@@ -1,6 +1,10 @@
 # CrisViper
 
-**Affine-gap alignment for CRISPR lineage tracing.** Align amplicon sequencing reads to a reference, detect indels and SNVs at cut sites, and trace edited cell lineages — across bulk, multi-target (e.g. CARLIN), and single-cell RNA-seq lineage data.
+**Affine-gap alignment for CRISPR lineage tracing.**
+
+Align amplicon sequencing reads to a reference, detect indels and SNVs at cut sites, and trace edited cell lineages across bulk, multi-target (e.g. CARLIN), and single-cell RNA-seq lineage data.
+
+Python 3.8+ | MIT License
 
 ## Quick start
 
@@ -16,27 +20,34 @@ crisviper convert fastq-to-tsv --fastq reads.fastq.gz --output reads.tsv
 crisviper align --reference ref.fa --queries reads.tsv --output results.json --lineage --report html
 ```
 
+## Installation
+
+From source:
+
+```bash
+git clone https://github.com/sxgou/crisviper
+cd crisviper
+python -m venv venv
+source venv/bin/activate
+pip install -e .
+```
+
+Docker:
+
+```bash
+docker build -t crisviper .
+docker run --rm -v $(pwd)/data:/data crisviper align --reference /data/ref.fa --queries /data/q.tsv --output /data/out.json
+```
+
+Dependencies: numpy>=1.19.0, biopython>=1.79, matplotlib>=3.3.0, jinja2>=3.0, numba>=0.55.0, pyyaml>=5.1
+
 ## Features
 
-**Core algorithm.** Gotoh affine-gap (Needleman-Wunsch extension) with semi-global alignment by default. NumPy-vectorized DP delivers ~4.3x per-sequence speedup.
-
-**Lineage mode (`--lineage`).** Position-aware gap penalties: low at cut sites, high in conserved regions. Post-alignment correction pipeline filters false-positive point mutations, converts dense mismatch blocks to indels, realigns repetitive elements between duplicated targets, and merges isolated matches that split continuous deletions.
-
-**DP-native features.** Gap exit bonus, short match discount, dense mismatch penalty, homology penalty, and isolated base penalty — all integrated into the DP recurrence so the aligner makes better decisions during alignment, not after.
-
-**Parallel processing.** ProcessPoolExecutor with automatic core detection (capped at 12 threads). Falls back to single-thread on worker failure. OMP_NUM_THREADS=1 set automatically to avoid NumPy thread conflicts under fork.
-
-**Output.** JSON, TSV, or both. Optional HTML report with mutation classification, length distributions, editing efficiency, per-target editing charts, mutation segment plots, cross-target chord diagrams, and allele heatmaps. Summary tables (TSV) for allele frequency, per-target editing, filter reasons, indel length distributions, and event-level details.
-
-**Allele confidence filter.** Point-mutation-only alleles require `readCount >= 5` (`--min-reads-sub`). Indel-containing alleles are unfiltered by default (`--min-reads-indel 0`). Adjust thresholds for higher precision or recall.
-
-**Summary tables.** The pipeline generates 6 TSV tables alongside the main output: `allele_frequency.tsv`, `per_target_editing.tsv`, `filter_reason.tsv`, `deletion_length.tsv`, `insertion_length.tsv`, and `event_level_details.tsv` — covering aggregate statistics, per-target editing rates, filter causes, length distributions, and per-event details with target overlap info.
+Gotoh affine-gap with semi-global alignment. NumPy-vectorized DP. Position-aware gap penalties in lineage mode. DP-native features (gap exit bonus, short match discount, dense mismatch penalty, homology penalty, isolated base penalty). Parallel ProcessPoolExecutor. JSON/TSV/HTML output with allele heatmaps.
 
 ## Docs
-
-- [Algorithm](docs/ALGORITHM.md) — DP formulation, vectorization, native features, correction pipeline
-- [User guide](docs/USER_GUIDE.md) — installation, commands, parameters, examples
+- [Algorithm](docs/ALGORITHM.md)
+- [User guide](docs/USER_GUIDE.md)
 
 ## License
-
 MIT
