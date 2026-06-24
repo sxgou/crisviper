@@ -76,6 +76,7 @@ def _save_tsv_results(results: List[Dict], output_path: str) -> None:
                 "matches": "NA",
                 "mismatches": "NA",
                 "gaps_in_query": "NA",
+                "gaps_in_ref": "NA",
                 "similarity": "NA",
                 "aligned_ref": "NA",
                 "aligned_query": "NA",
@@ -91,6 +92,7 @@ def _save_tsv_results(results: List[Dict], output_path: str) -> None:
                 "matches": result["stats"]["matches"],
                 "mismatches": result["stats"]["mismatches"],
                 "gaps_in_query": result["stats"]["gaps_in_query"],
+                "gaps_in_ref": result["stats"]["gaps_in_ref"],
                 "similarity": result["stats"]["similarity"],
                 "aligned_ref": result.get("aligned_ref", ""),
                 "aligned_query": result.get("aligned_query", ""),
@@ -99,6 +101,7 @@ def _save_tsv_results(results: List[Dict], output_path: str) -> None:
 
     fieldnames = ["readName", "cellBC", "UMI", "readCount", "score",
                   "matches", "mismatches", "gaps_in_query", "similarity",
+                  "gaps_in_ref",
                   "aligned_ref", "aligned_query", "error"]
 
     with open(output_path, 'w', newline='') as f:
@@ -120,7 +123,9 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
                      allele_window_end: int = None,
                      allele_top_n: int = 50,
                      version: str = "2.1.0",
-                     summary_data: Dict = None) -> None:
+                     summary_data: Dict = None,
+                     target_region_left: int = 13,
+                     target_region_right: int = 7) -> None:
     """
     Generate a mutation analysis report in the specified format.
 
@@ -313,7 +318,7 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
                 total_reads += rc
                 for m in r.get("mutations", []):
                     mp = m.get("ref_pos", -1)
-                    if cs.start - 3 <= mp <= cs.end + 3:
+                    if cs.start - target_region_left <= mp <= cs.end + target_region_right:
                         mutated_reads += rc
                         break
             rate = str(round(mutated_reads / total_reads * 100, 1)) if total_reads else "N/A"
@@ -332,6 +337,7 @@ def generate_report(results: List[Dict], output_path: str, fmt: str = "json",
         report["summary"]["unmutated_sequences"] = summary_data["unmutated_sequences"]
         report["summary"]["mutated_reads"] = summary_data["mutated_reads"]
         report["summary"]["editing_efficiency_pct"] = summary_data["editing_efficiency_pct"]
+        report["summary"]["unmutated_reads"] = summary_data["unmutated_reads"]
         report["mutation_stats"]["all_deletion_lengths_reads"] = summary_data["del_length_reads"]
         report["mutation_stats"]["all_insertion_lengths_reads"] = summary_data["ins_length_reads"]
 
@@ -749,9 +755,11 @@ def _write_warnings_txt(
         if ota_pct > 10:
             f.write(f"\nSignificant off-target amplification detected: "
                     f"{ota_pct:.0f}% of reads are not CARLIN.\n")
+        elif ota_pct > 0:
+            f.write(f"\nMinor off-target amplification detected. "
+                    f"{ota_pct:.0f}% of reads are off-target.\n")
         else:
-            f.write(f"\nInsignificant off-target amplification detected. "
-                    f"Only {ota_pct:.0f}% of reads are off-target.\n")
+            f.write("\nNo off-target amplification detected.\n")
 
         # Filtering warnings
         f.write("\nFILTERING\n")

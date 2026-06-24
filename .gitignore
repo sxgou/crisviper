@@ -46,3 +46,6 @@ examples/output/
 # Test cache
 .pytest_cache/
 .bitfun/
+
+# Editor backup files
+*.bak

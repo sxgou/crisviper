@@ -219,9 +219,9 @@ def get_amplicon_structure(ref_seq: str, config: AmpliconConfig = None) -> List[
     log.warning("Reference length mismatch: using hardcoded Cas9 motif '%s' for cutsite auto-detection. "
                 "For non-Cas9 systems, provide manual cutsites via YAML config.", motif)
     positions = [m.start() for m in re.finditer(motif, ref_seq)]
-    if len(positions) < 3:
-        log.warning("Insufficient GAGTCG motifs detected in reference sequence (found %d)", len(positions))
-        log.warning("Please provide cutsite positions manually")
+    if not positions:
+        log.warning("No GAGTCG motifs found in reference sequence. "
+                    "Please provide cutsite positions manually.")
         return []
     diffs = [positions[i+1] - positions[i] for i in range(len(positions)-1)]
     first_pos = positions[0]

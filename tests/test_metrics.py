@@ -36,9 +36,10 @@ class TestEffectiveAlleles:
         assert result == 0.0
 
     def test_three_unequal(self):
-        # Three alleles: 5, 3, 2
+        # Three alleles: 5, 3, 2 — H ≈ 1.4855, 2^H - 1 ≈ 1.8001
         result = effective_alleles([5, 3, 2], is_template=[False, False, False])
-        assert result > 0
+        assert abs(result - 1.8001) < 0.001, \
+            f"Expected ~1.8001 for frequencies [5,3,2], got {result:.4f}"
 
 
 class TestDiversityIndex:
@@ -47,14 +48,16 @@ class TestDiversityIndex:
 
     def test_basic(self):
         result = diversity_index([10, 10], is_template=[False, False])
-        assert result > 0
+        assert abs(result - 0.05) < 0.001, \
+            f"Expected diversity_index=0.05, got {result:.4f}"
 
     def test_all_template(self):
         assert diversity_index([10], is_template=[True]) == 0.0
 
     def test_normalize_by_edited(self):
         result = diversity_index([10, 5], is_template=[True, False], normalize_by_edited=True)
-        assert result >= 0
+        assert result == 0.0, \
+            f"Single non-template allele should yield 0.0, got {result}"
 
 
 class TestAllelesPerCell:

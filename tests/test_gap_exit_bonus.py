@@ -2,6 +2,7 @@
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pytest
 import numpy as np
@@ -85,30 +86,7 @@ class TestGapExitBonusMath:
 # Integration tests: gap_exit_bonus works through the Pipeline
 # ═══════════════════════════════════════════════════════════════
 
-CARLIN_REF = (
-    "TATGTGTGGGAGGGCTAAGAGG"   # Primer5 (23bp)
-    "CCGCC"                     # Prefix (5bp)
-    "GACTGCACGACAGTCGA"         # Target1
-    "CGATGGAG"                  # Linker
-    "TCGACACGACTCGCGCA"         # Target2
-    "TACGATGG"                  # Linker
-    "AGTCGACTACAGTCGCTA"        # Target3
-    "CGACGATG"                  # Linker
-    "GAGTCGCGAGCGCTATG"         # Target4
-    "AGCGACTA"                  # Linker
-    "TGGAGTCGATACGATACG"        # Target5
-    "CGCACGCT"                  # Linker
-    "ATGGAGTCGAGAGCGCGC"        # Target6
-    "TCGTCAAC"                  # Linker
-    "GATGGAGTCGCGACTGTA"        # Target7
-    "CGCACTCG"                  # Linker
-    "CGATGGAGTCGATAGTAT"        # Target8
-    "GCGTACAC"                  # Linker
-    "GCGATGGAGTCGACTGCA"        # Target9
-    "CGACAGTC"                  # Linker
-    "GACTATGGAGTCGATACGTAGC"    # Target10
-    "ACGCACATGATGGGAGCTAGCTGTGCCTTCTAGTTGCCAGCCATCTGTTGT"
-)
+from shared import CARLIN_REF
 
 class TestPipelineGapExitBonus:
     """Verify gap_exit_bonus works through the complete Pipeline"""
@@ -168,6 +146,14 @@ class TestPipelineGapExitBonus:
         insertions = [m for m in result.mutations
                       if m.type.name in ("INSERTION", "INDEL")]
         assert len(insertions) >= 1
+        # Verify detected mutations have valid type and geometry
+        for m in insertions:
+            assert m.type.name in ("INSERTION", "INDEL"), \
+                f"Expected INSERTION or INDEL, got {m.type.name}"
+            assert m.length > 0, \
+                f"Insertion/INDEL should have positive length, got {m.length}"
+            assert m.ref_pos >= 0, \
+                f"ref_pos should be non-negative, got {m.ref_pos}"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -181,10 +167,15 @@ class TestShortMatchDiscount:
         assert s1 == s2
 
     def test_short_match_consolidated_into_gap_global(self):
+        # "CCC"/"TTT" region: 3bp match followed by mismatch.
+        # short_match_window=3 enables short-match detection and discount=0.5
+        # penalizes short matches, changing the alignment path.
         ref, qry = "AAACCCGGGTTT", "AAATTTGGGTTT"
-        s0, _, _, _ = affine_gap_alignment(ref, qry, short_match_window=0, short_match_discount=0.5)
-        s1, _, _, _ = affine_gap_alignment(ref, qry, short_match_window=3, short_match_discount=0.0)
-        print(f"\n  ref={ref}  qry={qry}\n  OFF score={s0:.1f}\n  ON  score={s1:.1f}")
+        s0, ar0, aq0, _ = affine_gap_alignment(ref, qry, short_match_window=3, short_match_discount=0.5)
+        s1, ar1, aq1, _ = affine_gap_alignment(ref, qry, short_match_window=3, short_match_discount=0.0)
+        # Discount changes alignment score and path
+        assert s0 != s1, f"Discount should change alignment score (s0={s0:.1f}, s1={s1:.1f})"
+        assert len(ar0) == len(aq0) and len(ar1) == len(aq1)
 
     def test_long_matches_untouched(self):
         ref, qry = "ACGTACGTACGTACGT", "ACGTACGTACGTACGT"
@@ -224,7 +215,7 @@ class TestDenseMismatchPenalty:
         mmp = np.full(12, -1.0)
         ref, qry = "AAAACCCCGGGG", "AAAATTTTGGGG"
         s_off, _, _, st_off = affine_gap_alignment_position_aware(ref, qry, go, ge, mismatch_penalty_profile=mmp, dense_mismatch_penalty=0.0)
-        s_on, _, _, st_on = affine_gap_alignment_position_aware(ref, qry, go, ge, mismatch_penalty_profile=mmp, dense_mismatch_window=4, dense_mismatch_threshold=0.5, dense_mismatch_penalty=-5.0)
+        s_on, _, _, st_on = affine_gap_alignment_position_aware(ref, qry, go, ge, mismatch_penalty_profile=mmp, dense_mismatch_window=4, dense_mismatch_threshold=0.35, dense_mismatch_penalty=-5.0)
         print(f"\n  OFF: score={s_off:.1f} mismatches={st_off['mismatches']} gaps_ref={st_off['gaps_in_ref']}")
         print(f"  ON:  score={s_on:.1f} mismatches={st_on['mismatches']} gaps_ref={st_on['gaps_in_ref']}")
         changed = (st_on['mismatches'] != st_off['mismatches'] or st_on['gaps_in_ref'] != st_off['gaps_in_ref'])

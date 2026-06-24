@@ -15,6 +15,7 @@ import json
 import tempfile
 import shutil
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pytest
 
@@ -28,35 +29,7 @@ from crisviper import (
 )
 
 
-# ═══════════════════════════════════════════════════════════════
-# Synthetic test data
-# ═══════════════════════════════════════════════════════════════
-
-# Standard CARLIN 332bp reference sequence
-CARLIN_REF = (
-    "TATGTGTGGGAGGGCTAAGAGG"  # Primer5 (23bp)
-    "CCGCC"                    # Prefix (5bp)
-    "GACTGCACGACAGTCGA"        # Target1 (13+7 cutsite)
-    "CGATGGAG"                 # Linker (7bp)
-    "TCGACACGACTCGCGCA"        # Target2
-    "TACGATGG"                 # Linker
-    "AGTCGACTACAGTCGCTA"       # Target3
-    "CGACGATG"                 # Linker
-    "GAGTCGCGAGCGCTATG"        # Target4
-    "AGCGACTA"                 # Linker
-    "TGGAGTCGATACGATACG"       # Target5
-    "CGCACGCT"                 # Linker
-    "ATGGAGTCGAGAGCGCGC"       # Target6
-    "TCGTCAAC"                 # Linker
-    "GATGGAGTCGCGACTGTA"       # Target7
-    "CGCACTCG"                 # Linker
-    "CGATGGAGTCGATAGTAT"       # Target8
-    "GCGTACAC"                 # Linker
-    "GCGATGGAGTCGACTGCA"       # Target9
-    "CGACAGTC"                 # Linker
-    "GACTATGGAGTCGATACGTAGC"   # Target10
-    "ACGCACATGATGGGAGCTAGCTGTGCCTTCTAGTTGCCAGCCATCTGTTGT"  # Postfix(8)+Primer3(33)
-)
+from shared import CARLIN_REF
 
 
 def _make_single_mutated_query(ref_seq: str, pos: int, new_base: str) -> str:
@@ -200,6 +173,11 @@ class TestEndToEndPipeline:
         successful = result.get_successful()
         successful_names = [r.query.readName for r in successful]
         assert "sub_low_rc" not in successful_names
+        # Cross-validate: should appear in failed results
+        failed = result.get_failed()
+        failed_names = [r.query.readName for r in failed]
+        assert "sub_low_rc" in failed_names, \
+            f"sub_low_rc not in failed list either: {failed_names}"
 
     def test_mutations_detected_in_results(self):
         """Successfully aligned results should contain mutation events"""
@@ -238,6 +216,10 @@ class TestEndToEndPipeline:
         result = self._run_pipeline()
         stats = result.stats
         assert stats.mutated_sequences + stats.unmutated_sequences == stats.successful
+        # Cross-validate: stats.failed must match actual failed count
+        actual_failed = sum(1 for r in result.results if not r.success)
+        assert stats.failed == actual_failed, \
+            f"stats.failed={stats.failed} but {actual_failed} results have success=False"
 
     def test_pipeline_result_conversion_to_dict(self):
         """AlignmentResult.to_dict() is compatible with the old format"""
@@ -332,7 +314,8 @@ class TestEndToEndPipeline:
         config = PipelineConfig()
         result = align_single(self.queries[0], self.ref_seq, config)
         assert result is not None
-        assert result.success or not result.success
+        assert result.success, f"Wildtype alignment should succeed, got: {result.error}"
+        assert len(result.mutations) == 0, f"Wildtype should have 0 mutations, got {len(result.mutations)}"
 
     def test_mutations_in_del_query(self):
         """Deletion mutation alignment results should contain MutationEvent"""
@@ -348,3 +331,86 @@ class TestEndToEndPipeline:
                     has_indel = any(m.type == MutationType.INDEL
                                       for m in r.mutations)
                     assert has_indel or not r.stats.has_indel
+
+    def test_parallel_vs_sequential_consistency(self):
+        """threads=1 serial vs threads=2 parallel produce identical stats and per-query results."""
+        # Run with threads=1
+        result_serial = self._run_pipeline()
+        # Run the same queries with threads=2
+        config2 = PipelineConfig(
+            lineage_mode=False,
+            primer5_len=23, primer3_len=33,
+            primer5_threshold=19, primer3_threshold=29,
+            min_reads_sub=10, min_reads_indel=3,
+            threads=2,
+        )
+        pipeline2 = Pipeline(config=config2, ref_seq=self.ref_seq)
+        result_parallel = pipeline2.run(self.queries)
+
+        # Compare pipeline-level statistics
+        s = result_serial.stats
+        p = result_parallel.stats
+        assert p.total_queries == s.total_queries
+        assert p.successful == s.successful
+        assert p.failed == s.failed
+        assert p.total_reads == s.total_reads
+        assert p.mutated_sequences == s.mutated_sequences
+        assert p.unmutated_sequences == s.unmutated_sequences
+        assert p.mutated_reads == s.mutated_reads
+        assert p.n_anchor_failed == s.n_anchor_failed
+        assert p.n_noise_filtered == s.n_noise_filtered
+
+        # Compare per-query results (sorted by readName for determinism)
+        serial_by_name = {r.query.readName: r for r in result_serial.results}
+        parallel_by_name = {r.query.readName: r for r in result_parallel.results}
+        assert set(serial_by_name.keys()) == set(parallel_by_name.keys())
+        for name in serial_by_name:
+            sr = serial_by_name[name]
+            pr = parallel_by_name[name]
+            assert pr.success == sr.success, f"{name}: success mismatch"
+            assert len(pr.mutations) == len(sr.mutations), f"{name}: mutation count mismatch"
+            if not sr.success:
+                assert pr.error == sr.error, f"{name}: error mismatch"
+
+
+class TestBoundaryInputs:
+    """Boundary and edge-case input handling."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.ref_seq = CARLIN_REF
+        self.cfg = PipelineConfig(
+            primer5_len=23, primer3_len=33,
+            primer5_threshold=19, primer3_threshold=29,
+            min_reads_sub=10, min_reads_indel=3,
+        )
+
+    def test_empty_query_sequence(self):
+        """Empty query should fail with alignment error."""
+        q = QueryRecord(readName="empty", cellBC="test", UMI="U1", readCount=1, seq="")
+        result = align_single(q, self.ref_seq, self.cfg)
+        assert not result.success
+        assert "alignment" in result.error.lower() or "failed" in result.error.lower()
+
+    def test_all_n_query(self):
+        """All-N query should still align (valid characters, just ambiguous)."""
+        q = QueryRecord(readName="alln", cellBC="test", UMI="U1", readCount=50, seq="N" * len(self.ref_seq))
+        result = align_single(q, self.ref_seq, self.cfg)
+        # Should either succeed (many mismatches) or fail primer anchoring
+        if result.success:
+            assert len(result.mutations) > 0 or not result.stats.has_indel
+        else:
+            assert result.error != ""
+
+    def test_query_shorter_than_primers(self):
+        """Query shorter than primer5 should fail primer anchoring."""
+        q = QueryRecord(readName="short", cellBC="test", UMI="U1", readCount=1, seq="ACGT")
+        result = align_single(q, self.ref_seq, self.cfg)
+        assert not result.success
+
+    def test_reference_shorter_than_primers(self, tmp_path):
+        """Pipeline should handle a very short reference gracefully."""
+        cfg = PipelineConfig(primer5_len=50, primer3_len=50, min_reads_sub=10, min_reads_indel=3)
+        q = QueryRecord(readName="q", cellBC="test", UMI="U1", readCount=1, seq="A" * 10)
+        result = align_single(q, "ACGT", cfg)
+        assert not result.success

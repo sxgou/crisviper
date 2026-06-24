@@ -101,8 +101,12 @@ class TestComputeThreshold:
         freqs = np.array([100, 80, 60, 40, 20, 10, 5, 3, 2, 1])
         result = compute_threshold(freqs, max_elem=5, n_reads=1000, threshold_type="UMI")
         assert "max_molecules" in result
-        assert result["chosen"] >= result["one_tenth_99_pctl"]
-        assert result["chosen"] >= result["read_floor"]
+        assert result["one_tenth_99_pctl"] == 10
+        assert result["max_molecules"] == 21
+        assert result["equal_partition"] == 200
+        assert result["err_floor"] == 1
+        assert result["chosen"] == 200, \
+            f"Expected chosen=200, got {result['chosen']}"
 
     def test_override(self):
         freqs = np.array([100, 80, 60])
@@ -116,10 +120,11 @@ class TestComputeThreshold:
                                     threshold_type="CB")
         assert "max_cells" in result
 
-    def test_empty_edge(self):
+    def test_single_element_umi(self):
         freqs = np.array([10])
         result = compute_threshold(freqs, max_elem=1, n_reads=10, threshold_type="UMI")
-        assert result["chosen"] >= 1
+        assert result["chosen"] == 11, \
+            f"Expected chosen=11, got {result['chosen']}"
 
 
 # ═══════════════════════════════════════════════════════════════

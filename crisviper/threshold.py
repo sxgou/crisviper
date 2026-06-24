@@ -44,13 +44,14 @@ def compute_threshold(
                 "equal_partition": int(np.ceil(n_reads / max_elem)) if max_elem else 0,
                 "read_floor": read_floor, "chosen": read_floor}
 
-    # Error floor: expected number of reads at which a UMI of length `umi_length`
-    # has 0 errors given per-base error rate p:  freqs[0] * (1-p)^umi_length
+    # Error floor: expected read count with sequencing errors per UMI,
+    # approximated as freqs[0] * p * (1-p)^(umi_length-1).
+    # This models ~1 error per UMI as a noise floor threshold.
     err_floor_val = int(np.ceil(freqs[0] * p * (1 - p) ** (umi_length - 1)))
 
     thresholds = {
         "one_tenth_99_pctl": int(np.ceil(freqs[ind_99 - 1] / 10)),
-        field: int(freqs[min(max_elem, len(freqs)) - 1] + 1),
+        field: int(freqs[min(max_elem, len(freqs)) - 1] + 1) if max_elem > 0 else 0,
         "equal_partition": int(np.ceil(n_reads / max_elem)),
         "err_floor": err_floor_val,
         "read_floor": read_floor,

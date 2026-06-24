@@ -173,12 +173,24 @@ def main():
 
     subparsers = parser.add_subparsers(dest="command", required=True, help="Sub-command")
 
+    # Shared parent parser for paired-end merge parameters (DRY)
+    merge_parent = argparse.ArgumentParser(add_help=False)
+    merge_parent.add_argument("--min-overlap", type=int, default=10,
+                              help="Minimum overlap length for paired-end merging (bp, default: 10)")
+    merge_parent.add_argument("--max-mismatch-rate", type=int, default=20,
+                              help="Max mismatch rate in overlap region for merging (%%, default: 20)")
+    merge_parent.add_argument("--max-mismatch-diff", type=int, default=5,
+                              help="Max absolute mismatches in overlap region (default: 5)")
+    merge_parent.add_argument("--require-qual", type=int, default=15,
+                              help="Minimum base quality score (Phred) for merging (default: 15)")
+
     # ── Sub-command: convert ─────────────────────────────────────
     convert_parser = subparsers.add_parser("convert", help="Convert FASTQ to TSV/FASTA format")
     convert_subparsers = convert_parser.add_subparsers(dest="convert_command", required=True, help="Conversion sub-command")
 
     # fastq-to-tsv
-    tsv_parser = convert_subparsers.add_parser("fastq-to-tsv", help="Convert FASTQ to TSV format")
+    tsv_parser = convert_subparsers.add_parser("fastq-to-tsv", parents=[merge_parent],
+                                               help="Convert FASTQ to TSV format")
     tsv_parser.add_argument("--fastq", default=None, help="Input FASTQ file (single-end, supports .gz)")
     tsv_parser.add_argument("--fastq1", default=None, help="Paired-end R1 FASTQ file (use with --fastq2)")
     tsv_parser.add_argument("--fastq2", default=None, help="Paired-end R2 FASTQ file (use with --fastq1)")
@@ -186,35 +198,19 @@ def main():
     tsv_parser.add_argument("--sample-name", default="sample", help="Sample name")
     tsv_parser.add_argument("--min-reads", type=int, default=1,
                             help="Minimum read count threshold (default: 1, no filtering)")
-    # Paired-end merge parameters
-    tsv_parser.add_argument("--min-overlap", type=int, default=10,
-                            help="Minimum overlap length for paired-end merging (bp, default: 10)")
-    tsv_parser.add_argument("--max-mismatch-rate", type=int, default=20,
-                            help="Max mismatch rate in overlap region for merging (%%, default: 20)")
-    tsv_parser.add_argument("--max-mismatch-diff", type=int, default=5,
-                            help="Max absolute mismatches in overlap region (default: 5)")
-    tsv_parser.add_argument("--require-qual", type=int, default=15,
-                            help="Minimum base quality score (Phred) for merging (default: 15)")
 
     # fastq-to-fasta
-    fasta_parser = convert_subparsers.add_parser("fastq-to-fasta", help="Convert FASTQ to FASTA format")
+    fasta_parser = convert_subparsers.add_parser("fastq-to-fasta", parents=[merge_parent],
+                                                 help="Convert FASTQ to FASTA format")
     fasta_parser.add_argument("--fastq", default=None, help="Input FASTQ file (single-end, supports .gz)")
     fasta_parser.add_argument("--fastq1", default=None, help="Paired-end R1 FASTQ file (use with --fastq2)")
     fasta_parser.add_argument("--fastq2", default=None, help="Paired-end R2 FASTQ file (use with --fastq1)")
     fasta_parser.add_argument("--output", required=True, help="Output FASTA file path")
     fasta_parser.add_argument("--sample-name", default="sample", help="Sample name")
-    # Paired-end merge parameters
-    fasta_parser.add_argument("--min-overlap", type=int, default=10,
-                              help="Minimum overlap length for paired-end merging (bp, default: 10)")
-    fasta_parser.add_argument("--max-mismatch-rate", type=int, default=20,
-                              help="Max mismatch rate in overlap region for merging (%%, default: 20)")
-    fasta_parser.add_argument("--max-mismatch-diff", type=int, default=5,
-                              help="Max absolute mismatches in overlap region (default: 5)")
-    fasta_parser.add_argument("--require-qual", type=int, default=15,
-                              help="Minimum base quality score (Phred) for merging (default: 15)")
 
     # ── Sub-command: align (parallel batch alignment) ─────────────
-    align_parser = subparsers.add_parser("align", help="Parallel batch sequence alignment")
+    align_parser = subparsers.add_parser("align", parents=[merge_parent],
+                                         help="Parallel batch sequence alignment")
     align_parser.add_argument("--reference", required=True, help="Reference sequence FASTA file")
     align_parser.add_argument("--queries", default=None,
                               help="Query sequence file (TSV, FASTA, or FASTQ). For paired-end input, "
@@ -230,15 +226,6 @@ def main():
                               help="Output format: json (default), tsv, all")
     align_parser.add_argument("--sample-name", default="sample",
                               help="Sample name for read labeling (used when input is FASTQ)")
-    # Paired-end merge parameters
-    align_parser.add_argument("--min-overlap", type=int, default=10,
-                              help="Minimum overlap length for paired-end merging (bp, default: 10)")
-    align_parser.add_argument("--max-mismatch-rate", type=int, default=20,
-                              help="Max mismatch rate in overlap region for merging (%%, default: 20)")
-    align_parser.add_argument("--max-mismatch-diff", type=int, default=5,
-                              help="Max absolute mismatches in overlap region (default: 5)")
-    align_parser.add_argument("--require-qual", type=int, default=15,
-                              help="Minimum base quality score (Phred) for merging (default: 15)")
 
     # Alignment parameters (default=None means: use YAML config first, then PipelineConfig defaults)
     align_parser.add_argument("--match-score", type=float, default=None,
@@ -359,8 +346,8 @@ def main():
                               help="Path to a JSON file specifying cutsite positions for gradient penalty modulation "
                                    "(optional). Purpose: When provided, the gradient penalty profile centers on "
                                    "these explicitly defined positions rather than using auto-detection from the "
-                                   "reference sequence. Principle: JSON format: [{\"name\": \"T1\", \"position\": 45}, ...] "
-                                   "where position is the cutsite center (0-indexed) on the reference. "
+                                    "reference sequence. Principle: JSON format: [{\"name\": \"T1\", \"start\": 42, \"end\": 47}, ...] "
+                                    "where start/end are the cutsite boundaries (0-indexed) on the reference. "
                                    "Unless cutsites are provided via JSON, --config YAML, or auto-detection, "
                                    "gradient mode will have no effect. Use case: Explicit cutsite config for "
                                    "multi-target amplicons, non-standard Cas enzymes, or validation against "
@@ -473,7 +460,7 @@ def main():
                                    "stability limit). Set to 1 for debugging (easier stack traces).")
     align_parser.add_argument("--chunk-size", type=int, default=None,
                               help="Number of query sequences assigned to each worker process per chunk "
-                                   "(default: 500; set to 0 for auto-compute as total_queries / (threads × 3)). Purpose: Controls "
+                                   "(PipelineConfig default: 500; set to 0 for auto-compute as total_queries / (threads × 3)). Purpose: Controls "
                                    "the granularity of parallel work distribution. Smaller chunks improve load "
                                    "balancing (workers finish at similar times) but increase inter-process "
                                    "communication overhead. Principle: Each worker processes one chunk at a time; "
@@ -602,7 +589,7 @@ def main():
                                    "Use with --allele-window-end to zoom into a specific cutsite region. "
                                    "Leave at default (0) to show the full amplicon.")
     align_parser.add_argument("--allele-window-end", type=int, default=None,
-                              help="End position (exclusive, 0-indexed) for the allele display window in reports "
+                               help="End position (inclusive, 0-indexed) for the allele display window in reports "
                                    "(default: end of reference). Purpose: Defines the end boundary of the "
                                    "display window — see --allele-window-start for details. Use case: Set "
                                    "to len(ref) - primer3_len to exclude the 3' primer region. Set to a "
@@ -795,7 +782,9 @@ def main():
                              allele_window_end=args.allele_window_end,
                              allele_top_n=args.allele_top_n,
                              version=__version__,
-                             summary_data=summary_data)
+                             summary_data=summary_data,
+                             target_region_left=config.amplicon_config.target_region_left if config.amplicon_config else 13,
+                             target_region_right=config.amplicon_config.target_region_right if config.amplicon_config else 7)
             t = _log_timing(log, "Generate HTML report", t)
 
         total = time.perf_counter() - t0

@@ -59,7 +59,7 @@ class MutationEvent:
 
     def to_dict(self) -> Dict:
         return {
-            "type": self.type.value if hasattr(self.type, 'value') else str(self.type),
+            "type": self.type.value if isinstance(self.type, MutationType) else str(self.type),
             "ref_pos": self.ref_pos,
             "ref_base": self.ref_base,
             "query_base": self.query_base,
@@ -283,6 +283,9 @@ class PipelineConfig:
     isolated_base_penalty: float = 0.0
 
     # ── Primer parameters ──
+    # These duplicate AmpliconConfig.primer5_len / primer3_len in config.py.
+    # Keep in sync: PipelineConfig values are used by pipeline.py alignment;
+    # AmpliconConfig values define the reference layout.
     primer5_len: int = 23
     primer3_len: int = 33
     primer5_threshold: int = 19
