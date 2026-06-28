@@ -38,7 +38,7 @@ crisviper convert fastq-to-tsv --fastq reads.fastq.gz --output reads.tsv --sampl
 crisviper align --reference ref.fasta --queries reads.tsv --output results.json
 ```
 
-输出 JSON：包含比对后的序列、得分和基本统计（匹配数、错配数、gap 数）。
+输出 JSON + TSV：JSON 包含比对后的序列、得分和基本统计（匹配数、错配数、gap 数）；TSV 为简化的表格格式。`--format all` 同时输出两种格式。
 
 ### 2. 多靶点谱系示踪（如 CARLIN，10 targets）
 
@@ -119,6 +119,34 @@ ACGTACGT...
   {"name": "Target1", "start": 41, "end": 47}
 ]}
 ```
+
+### YAML 配置文件
+
+通过 `--config` 传入，将扩增子结构、cutsite 位置和管道参数统一为一个文件。支持三个配置段：
+
+```yaml
+amplicon:
+  n_targets: 10                # 靶点数量
+  period: 33                   # 靶点间距 (bp)
+  cutsite_offset: 13           # 保守区到 cutsite 的偏移 (bp)
+  cutsite_len: 7               # Cutsite 长度 (bp)
+  primer5_len: 23              # 5' 引物长度 (bp)
+  primer3_len: 33              # 3' 引物长度 (bp)
+  prefix: ""                   # 5' 引物后的固定前缀
+
+cutsites:                      # 显式 cutsite 列表（可选，覆盖 auto-detect）
+  - name: Target1
+    start: 41
+    end: 47
+
+pipeline:                      # 管道参数（可选，覆盖 CLI 默认值）
+  threads: 4
+  match_score: 2.0
+  gap_open: -2.0
+  correct_bg_sub: true
+```
+
+详细介绍和完整示例见项目根目录 `crisviper_config.yaml`。
 
 ---
 
@@ -271,29 +299,27 @@ ACGTACGT...
     "gaps_in_ref": 2,
     "gaps_in_query": 0,
     "similarity": 0.982,
-    "identity": 1.0,
-    "has_mutation": true,
-    "dense_regions_converted": false
+    "identity": 1.0
   }
 }
 ```
 
 ### TSV
 
-简化的表格：readName, cellBC, UMI, readCount, score, matches, mismatches, gaps_in_query, similarity, aligned_ref, aligned_query, error。
+简化的表格：readName, cellBC, UMI, readCount, score, matches, mismatches, gaps_in_query, gaps_in_ref, similarity, aligned_ref, aligned_query, error。
 
 ### HTML report / 分析报告
 
-`--report html` 生成的 HTML 报告包含：摘要统计、突变类型条形图、长度分布、top allele 表、等位基因热图和每条突变序列的突变标签。所有 JavaScript 内联，无外部依赖，离线可用。
+`--report html` 生成的 HTML 报告包含：摘要统计、突变类型条形图、长度分布、top allele 表、等位基因热图。所有 JavaScript 内联，无外部依赖，离线可用。详情突变注释见 AlleleAnnotations.txt 文本报告。
 
 ### Summary tables / 总结表格
 
-运行完成后（`--format all` 或默认 JSON 输出），在输出目录下自动生成 6 个 TSV 表格：
+运行完成后自动在输出目录下生成 6 个 TSV 总结表格：
 
 | 文件 | 内容 |
 |------|------|
 | `allele_frequency.tsv` | 按突变指纹聚合的 Allele 频率表：Rank, Allele, Mutation_Type, Sequences, Reads, Reads_Pct |
-| `per_target_editing.tsv` | 每个 Target 的编辑类型统计：Total, Edited, Rate_Pct, Del, Ins, Sub, Avg_Mut_Length（使用 20bp 窗口） |
+| `per_target_editing.tsv` | 每个 Target 的编辑类型统计：Target, Total, Edited, Rate_Pct, Del_intra, Del_inter, Ins, Indel_intra, Indel_inter, Sub, Avg_Mut_Length, Wt（使用 27bp 窗口：保守区 13bp + cutsite + linker 7bp） |
 | `filter_reason.tsv` | 序列丢弃原因统计：Reason, Sequences, Reads |
 | `deletion_length.tsv` | Deletion 长度分布（按事件长度分组）：Length_bp, Events, Reads, Reads_Pct |
 | `insertion_length.tsv` | Insertion 长度分布：Length_bp, Events, Reads, Reads_Pct |
@@ -336,4 +362,31 @@ ACGTACGT...
 - 时间复杂度：标准模式和谱系模式均为 $O(m \times n)$。
 - 并行：默认单线程。用 `--threads N` 开启多进程并行。
 - 线程数建议不超过 CPU 物理核心数。
-- 向量化：Iy 和 M 按行 NumPy 向量化；Ix 因同行数据依赖保持顺序循环。
+- 向量化：预处理阶段（替换得分矩阵、同源惩罚等）使用 NumPy 向量化操作；DP 填充主路径由 Numba JIT（`@jit(nopython=True)`）编译加速，Numba 不可用时自动降级为纯 NumPy 向量化 + Python 循环（v1.1.0+，单序列加速比 ~28×）。
+- 降级路径下 Iy 和 M 按行 NumPy 向量化；Ix 因同行数据依赖保持顺序循环。
+
+---
+
+## Advanced features / 进阶功能
+
+以下模块作为编程接口或通过 YAML 配置调用：
+
+### Denoiser（crisviper/denoiser.py）
+
+UMI/CB（Unique Molecular Identifier / Cell Barcode）去噪。使用 directional adjacency clustering 对相近序列进行去重，降低 PCR 重复和测序噪声。
+
+### Caller（crisviper/caller.py）
+
+Allele calling（等位基因判定）。提供 coarse-grain（按突变指纹聚类）和 exact（精确匹配）两种策略。
+
+### Metrics（crisviper/metrics.py）
+
+多样性/异质性度量。计算 Shannon entropy、effective alleles 等群体遗传学指标。
+
+### Threshold（crisviper/threshold.py）
+
+UMI/CB 过滤阈值计算。基于 read count 分布自动计算合适的过滤阈值。
+
+### read-to-allele 映射
+
+`--read-to-allele` 选项（仅 FASTQ 输入）生成 `read_to_allele.tsv` 映射表，将原始 FASTQ read 标识符关联到其所属的 allele。

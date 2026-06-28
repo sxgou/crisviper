@@ -1,5 +1,7 @@
 # Contributing / 贡献指南
 
+Python 版本要求：>= 3.8（详见 pyproject.toml）
+
 ## Reporting Issues / 报告问题
 
 - 搜索已有 Issue 避免重复
@@ -11,7 +13,8 @@
 1. Fork 仓库并创建功能分支：`git checkout -b feature/my-feature`
 2. 确保代码通过 lint：`ruff check crisviper/`
 3. 确保全部测试通过：`python -m pytest tests/`
-4. 提交 PR 到 `dev` 分支
+4. 更新 [CHANGELOG.md](CHANGELOG.md) 记录变更内容（新增、修复、变更）
+5. 提交 PR 到 `dev` 分支
 
 ## Development Setup
 
