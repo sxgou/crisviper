@@ -33,7 +33,7 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/sxgou/lineage-tracer"
+Repository = "https://github.com/sxgou/crisviper"
 
 [project.scripts]
 crisviper = "crisviper.cli:main"
